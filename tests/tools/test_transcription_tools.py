@@ -1187,13 +1187,18 @@ class TestRunCommandSttIdleTimeout:
         idle timeout shorter than its total runtime."""
         from tools.transcription_tools import _run_command_stt
 
+        # Margins are deliberately loose (idle timeout 2s, ticks every
+        # 0.5s). The idle clock starts at process spawn, so a fresh
+        # interpreter's startup latency must stay far below the window on
+        # a loaded CI box. The original 0.1s/0.04s pairing raced startup
+        # and flaked.
         script = tmp_path / "progress_then_exit.py"
         script.write_text(
             "\n".join([
                 "import sys, time",
-                "for idx in range(4):",
+                "for idx in range(5):",
                 "    print(f'tick {idx}', file=sys.stderr, flush=True)",
-                "    time.sleep(0.04)",
+                "    time.sleep(0.5)",
                 "print('done', flush=True)",
             ]),
             encoding="utf-8",
@@ -1201,7 +1206,7 @@ class TestRunCommandSttIdleTimeout:
 
         result = _run_command_stt(
             self._shell_command(sys.executable, "-u", str(script)),
-            timeout=0.1,
+            timeout=2.0,
         )
 
         assert result.returncode == 0
@@ -1213,6 +1218,8 @@ class TestRunCommandSttIdleTimeout:
         and pre-stall output is preserved on the TimeoutExpired."""
         from tools.transcription_tools import _run_command_stt
 
+        # Same loose-margin rationale as above. The window (2s) must dwarf
+        # interpreter startup, so the kill fires only on a genuine stall.
         script = tmp_path / "progress_then_hang.py"
         script.write_text(
             "\n".join([
@@ -1226,7 +1233,7 @@ class TestRunCommandSttIdleTimeout:
         with pytest.raises(subprocess.TimeoutExpired) as excinfo:
             _run_command_stt(
                 self._shell_command(sys.executable, "-u", str(script)),
-                timeout=0.1,
+                timeout=2.0,
             )
 
         assert "starting pass 1" in (excinfo.value.stderr or "")
