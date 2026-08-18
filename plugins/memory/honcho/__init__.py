@@ -19,6 +19,7 @@ from agent.memory_manager import sanitize_context
 from agent.memory_provider import MemoryProvider, is_trivial_prompt
 from plugins.memory.honcho.client import spawn_context_thread
 from plugins.memory.honcho.dialectic import DialecticMixin
+from plugins.memory.honcho.session import classify_delivery_error
 from plugins.memory.honcho.tool_schemas import ALL_TOOL_SCHEMAS
 from tools.registry import tool_error
 
@@ -620,8 +621,10 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         def _run():
             try:
                 fn()
-            except Exception as e:
-                logger.debug(fail_msg, e)
+            except Exception as exc:
+                category, status = classify_delivery_error(exc)
+                logger.debug("%s category=%s status=%s", fail_msg.removesuffix(": %s"),
+                             category, status if status is not None else "none")
 
         thread = spawn_context_thread(_run, name=name)
         thread.start()
@@ -649,8 +652,10 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             self._sync_thread.join(timeout=10.0)
         try:
             self._manager.flush_all()
-        except Exception as e:
-            logger.debug("Honcho session-end flush failed: %s", e)
+        except Exception as exc:
+            category, status = classify_delivery_error(exc)
+            logger.debug("Honcho session-end flush failed category=%s status=%s",
+                         category, status if status is not None else "none")
 
     # ----- Tools -----
 

@@ -134,6 +134,12 @@ When pointing Hermes at a self-hosted Honcho server, `hermes honcho setup` (and 
 | `userPeerAliases` | `{}` | Gateway only. Map of runtime IDs to peers (`{"7654321": "alice"}`). Many-to-one |
 | `runtimePeerPrefix` | `""` | Gateway only. Namespaces unknown runtime IDs (`telegram_7654321`) when no alias matches |
 
+Honcho message writes use the SDK's bounded transport retries. When they are
+exhausted, Hermes stays fail-open, logs a content-free delivery failure, and
+keeps the messages unsynchronized for a later in-process flush. Hermes does not
+currently provide restart-safe durable replay; its canonical session transcript
+remains the source of truth.
+
 **Session strategy** controls how Honcho sessions map to your work:
 - `per-session` — each `hermes` run gets a fresh session. Clean starts, memory via tools. Recommended for new users.
 - `per-directory` — one Honcho session per working directory. Context accumulates across runs.

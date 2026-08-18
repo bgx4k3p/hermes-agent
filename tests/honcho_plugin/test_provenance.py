@@ -10,7 +10,11 @@ import pytest
 
 from plugins.memory.honcho import HonchoMemoryProvider
 from plugins.memory.honcho.client import HonchoClientConfig
-from plugins.memory.honcho.session import HonchoSession, HonchoSessionManager
+from plugins.memory.honcho.session import (
+    DeliveryState,
+    HonchoSession,
+    HonchoSessionManager,
+)
 
 
 AGADOR_DEFAULTS = {
@@ -112,7 +116,7 @@ def test_exact_normative_metadata_and_sdk_created_at_for_both_roles():
     mgr.add_source_message(session, "assistant", "hi")
     created, sdk_session = _wire_flush(mgr, session)
 
-    assert mgr._flush_session(session) is True
+    assert mgr._flush_session(session).state is DeliveryState.DELIVERED
     assert len(created) == 2
     user, assistant = created
     for item in created:
@@ -154,8 +158,8 @@ def test_failed_flush_retry_preserves_event_ids_metadata_and_created_at():
     mgr.add_source_message(session, "user", "retry me")
     created, _ = _wire_flush(mgr, session, fail_first=True)
 
-    assert mgr._flush_session(session) is False
-    assert mgr._flush_session(session) is True
+    assert mgr._flush_session(session).state is DeliveryState.FAILED
+    assert mgr._flush_session(session).state is DeliveryState.DELIVERED
     assert len(created) == 2
     assert created[0].metadata == created[1].metadata
     assert created[0].created_at == created[1].created_at
@@ -315,7 +319,7 @@ def test_metadata_secrets_are_force_redacted_before_sdk_boundary(monkeypatch):
     mgr.add_source_message(session, "user", "conversation content is not changed")
     created, _ = _wire_flush(mgr, session)
 
-    assert mgr._flush_session(session) is True
+    assert mgr._flush_session(session).state is DeliveryState.DELIVERED
     serialized = repr(created[0].metadata)
     assert secret not in serialized
     assert secret_key not in serialized

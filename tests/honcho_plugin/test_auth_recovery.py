@@ -15,6 +15,7 @@ from plugins.memory.honcho import HonchoMemoryProvider
 from plugins.memory.honcho import oauth
 from plugins.memory.honcho.client import HonchoClientConfig
 from plugins.memory.honcho.session import (
+    DeliveryState,
     HonchoAuthError,
     HonchoSession,
     HonchoSessionManager,
@@ -404,14 +405,14 @@ class TestSyncAuthRetry:
     def test_401_forces_refresh_and_retries_once(self):
         flaky = _FlakyHonchoSession(failures=1)
         mgr, session = _make_sync_manager(flaky)
-        assert mgr._flush_session(session) is True
+        assert mgr._flush_session(session).state is DeliveryState.DELIVERED
         assert flaky.calls == 2
         assert all(m["_synced"] for m in session.messages)
 
     def test_persistent_401_fails_and_records_auth_failure(self):
         flaky = _FlakyHonchoSession(failures=99)
         mgr, session = _make_sync_manager(flaky)
-        assert mgr._flush_session(session) is False
+        assert mgr._flush_session(session).state is DeliveryState.FAILED
         assert flaky.calls == 2  # exactly one retry, no loop
         assert not any(m.get("_synced") for m in session.messages)
         assert mgr._auth_failure is not None
@@ -419,18 +420,18 @@ class TestSyncAuthRetry:
     def test_failed_reauth_fails_without_retry(self):
         flaky = _FlakyHonchoSession(failures=99)
         mgr, session = _make_sync_manager(flaky, reauth_ok=False)
-        assert mgr._flush_session(session) is False
+        assert mgr._flush_session(session).state is DeliveryState.FAILED
         assert flaky.calls == 1
         assert mgr._auth_failure is not None
 
     def test_later_success_recovers_and_clears_auth_state(self):
         flaky = _FlakyHonchoSession(failures=2)
         mgr, session = _make_sync_manager(flaky, reauth_ok=False)
-        assert mgr._flush_session(session) is False
+        assert mgr._flush_session(session).state is DeliveryState.FAILED
         assert mgr._auth_failure is not None
 
         mgr._force_reauth = lambda: True
-        assert mgr._flush_session(session) is True
+        assert mgr._flush_session(session).state is DeliveryState.DELIVERED
         assert all(m["_synced"] for m in session.messages)
         assert mgr._auth_failure is None
 
@@ -493,7 +494,7 @@ class TestDeadGrantSkipsCalls:
         _kill_grant(tmp_path, monkeypatch)
         flaky = _FlakyHonchoSession(failures=0)
         mgr, session = _make_sync_manager(flaky)
-        assert mgr._flush_session(session) is False
+        assert mgr._flush_session(session).state is DeliveryState.FAILED
         assert flaky.calls == 0
         assert mgr._auth_failure is not None
 
@@ -501,11 +502,11 @@ class TestDeadGrantSkipsCalls:
         path = _kill_grant(tmp_path, monkeypatch)
         flaky = _FlakyHonchoSession(failures=0)
         mgr, session = _make_sync_manager(flaky)
-        assert mgr._flush_session(session) is False
+        assert mgr._flush_session(session).state is DeliveryState.FAILED
         assert flaky.calls == 0
 
         _relogin(path)
-        assert mgr._flush_session(session) is True
+        assert mgr._flush_session(session).state is DeliveryState.DELIVERED
         assert flaky.calls == 1
         assert all(m["_synced"] for m in session.messages)
         assert mgr._auth_failure is None
@@ -767,7 +768,7 @@ class TestClientRebuildRetry:
         session.add_message("user", "hello")
         session.add_message("assistant", "hi")
 
-        assert mgr._flush_session(session) is True
+        assert mgr._flush_session(session).state is DeliveryState.DELIVERED
         # The stale pre-rebuild session must not be retried.
         assert stale_session.add_messages.call_count == 1
         assert fresh_session.add_messages.call_count == 1
