@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import copy
 import queue
 import logging
+import platform as _platform
+import re
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, TYPE_CHECKING
 
 from plugins.memory.honcho.client import get_honcho_client, spawn_context_thread
@@ -25,6 +29,83 @@ logger = logging.getLogger(__name__)
 _ASYNC_SHUTDOWN = object()
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _rfc3339(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _resolve_machine_identity(context: dict[str, Any]) -> str:
+    for key in ("machine_id", "runtime_machine_id"):
+        value = context.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    try:
+        value = _platform.node().strip()
+    except Exception:
+        value = ""
+    return value or "unknown-machine"
+
+
+_SECRET_SHAPED_RE = re.compile(
+    r"(?i)(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|\beyJ[A-Za-z0-9_-]{10,}\.|"
+    r"\b(?:api[_-]?key|token|password|secret)\s*[:=]|\b(?:sk-|ghp_|github_pat_)[A-Za-z0-9_-]{12,})"
+)
+_SAFE_CREDENTIAL_REFERENCE_SUFFIXES = (
+    "_path", "_ref", "_reference", "_name", "_id", "_status", "_count", "_policy", "_enabled",
+)
+
+
+def _normalize_metadata_key(key: str) -> str:
+    value = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", key)
+    value = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", value)
+    return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+
+
+def _is_sensitive_metadata_key(key: str) -> bool:
+    normalized = _normalize_metadata_key(key)
+    if normalized.endswith(_SAFE_CREDENTIAL_REFERENCE_SUFFIXES):
+        return False
+    parts = normalized.split("_")
+    compact = "".join(parts)
+    if any(part in {"password", "passwd", "secret", "token", "authorization"} for part in parts):
+        return True
+    if any(marker in compact for marker in (
+        "apikey", "privatekey", "clientsecret", "accesstoken", "refreshtoken",
+        "authtoken", "password", "authorization",
+    )):
+        return True
+    return any(parts[index:index + 2] in (["api", "key"], ["private", "key"])
+               for index in range(max(0, len(parts) - 1)))
+
+
+def _redact_metadata_value(value: Any) -> Any:
+    """Force-redact metadata recursively and fail closed for suspicious values."""
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            raw_key = str(key)
+            safe_key = str(_redact_metadata_value(raw_key))
+            result[safe_key] = "«redacted-metadata»" if _is_sensitive_metadata_key(raw_key) else _redact_metadata_value(item)
+        return result
+    if isinstance(value, (list, tuple)):
+        return [_redact_metadata_value(item) for item in value]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if not isinstance(value, str):
+        return "«redacted-metadata»"
+    try:
+        from agent.redact import redact_sensitive_text
+        redacted = redact_sensitive_text(value, force=True, redact_url_credentials=True)
+    except Exception:
+        return "«redacted-metadata»"
+    return "«redacted-metadata»" if redacted == value and _SECRET_SHAPED_RE.search(value) else redacted
+
+
 @dataclass
 class HonchoSession:
     """A conversation session backed by Honcho: a local message cache that syncs to Honcho."""
@@ -34,14 +115,16 @@ class HonchoSession:
     assistant_peer_id: str  # Honcho peer ID for the assistant
     honcho_session_id: str  # Honcho session ID
     messages: list[dict[str, Any]] = field(default_factory=list)
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=_utc_now)
+    updated_at: datetime = field(default_factory=_utc_now)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def add_message(self, role: str, content: str, **kwargs: Any) -> None:
         """Add a message to the local cache."""
-        self.messages.append({"role": role, "content": content, "timestamp": datetime.now().isoformat(), **kwargs})
-        self.updated_at = datetime.now()
+        created_at = kwargs.pop("created_at", None) or _utc_now()
+        self.messages.append({"role": role, "content": content, "timestamp": _rfc3339(created_at),
+                              "created_at": created_at, **kwargs})
+        self.updated_at = _utc_now()
 
 
 class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMixin, SessionMigrationMixin):
@@ -51,6 +134,7 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
     def __init__(
         self, honcho: Honcho | None = None, context_tokens: int | None = None, config: Any | None = None,
         runtime_user_peer_name: str | None = None, runtime_user_peer_name_alt: str | None = None,
+        provenance_context: dict[str, Any] | None = None, source_session_id: str | None = None,
     ):
         """``honcho`` defaults to the per-identity cached client; ``context_tokens`` caps
         context() calls (None = Honcho default); the runtime peer names are the gateway
@@ -60,6 +144,10 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         self._config = config
         self._runtime_user_peer_name = runtime_user_peer_name
         self._runtime_user_peer_name_alt = runtime_user_peer_name_alt
+        self._provenance_context = dict(provenance_context or {})
+        self._source_session_id = str(source_session_id or "").strip()
+        configured_metadata = getattr(config, "message_metadata", {}) if config else {}
+        self._message_metadata = copy.deepcopy(configured_metadata) if isinstance(configured_metadata, dict) else {}
         self._cache: dict[str, HonchoSession] = {}
         self._cache_lock = threading.RLock()
         self._peers_cache: dict[str, Any] = {}
@@ -95,6 +183,75 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         self._async_queue: queue.Queue | None = queue.Queue() if self._write_frequency == "async" else None
         self._async_thread: threading.Thread | None = None
         self._async_thread_lock = threading.Lock()
+
+    @staticmethod
+    def new_source_record_id() -> str:
+        return str(uuid.uuid4())
+
+    def _build_message_metadata(self, session: HonchoSession, role: str, *, created_at: datetime,
+                                source_record_id: str, source_session_id: str | None,
+                                chunk_index: int, chunk_count: int,
+                                secret_rejected: bool = False) -> dict[str, Any]:
+        context = self._provenance_context
+        extensions = copy.deepcopy(self._message_metadata.get("extensions", {}))
+        if not isinstance(extensions, dict):
+            extensions = {}
+        static_hermes = extensions.get("hermes")
+        hermes_extension = dict(static_hermes) if isinstance(static_hermes, dict) else {}
+        hermes_extension.update({
+            "platform": str(context.get("platform") or "cli"),
+            "agent_context": str(context.get("agent_context") or "primary"),
+            "agent_identity": str(context.get("agent_identity") or "default"),
+            "agent_workspace": str(context.get("agent_workspace") or "hermes"),
+            "user_id": context.get("user_id"), "user_id_alt": context.get("user_id_alt"),
+            "user_name": context.get("user_name"), "chat_id": context.get("chat_id"),
+            "chat_name": context.get("chat_name"), "chat_type": context.get("chat_type"),
+            "thread_id": context.get("thread_id"), "gateway_session_key": context.get("gateway_session_key"),
+            "session_title": context.get("session_title"), "honcho_session_id": session.honcho_session_id,
+            "chunk_index": chunk_index, "chunk_count": chunk_count,
+        })
+        extensions["hermes"] = hermes_extension
+        metadata = copy.deepcopy(self._message_metadata)
+        profile = str(context.get("agent_identity") or "default")
+        agent_context = str(context.get("agent_context") or "primary")
+        metadata.update({
+            "schema": metadata.get("schema") or "hermes.provenance/v1", "event_id": str(uuid.uuid4()),
+            "record_kind": "source_event",
+            "source_kind": "secret_rejected" if secret_rejected else ("user_statement" if role == "user" else "assistant_statement"),
+            "human_peer": session.user_peer_id, "ai_peer": session.assistant_peer_id,
+            "interface": str(context.get("platform") or "cli"), "machine": _resolve_machine_identity(context),
+            "runtime": f"hermes:{profile}:{agent_context}",
+            "session_id": str(source_session_id or self._source_session_id or session.key),
+            "channel_id": context.get("chat_id"), "source_record_id": source_record_id,
+            "observed_at": _rfc3339(created_at), "effective_at": metadata.get("effective_at"),
+            "authority": session.user_peer_id if role == "user" else session.assistant_peer_id,
+            "evidence_refs": metadata.get("evidence_refs") if isinstance(metadata.get("evidence_refs"), list) else [],
+            "confidence": metadata.get("confidence"),
+            "verification_state": metadata.get("verification_state") or "unverified",
+            "review_state": metadata.get("review_state") or "captured",
+            "sensitivity": metadata.get("sensitivity") or "private",
+            "retention_class": metadata.get("retention_class") or "semantic",
+            "derived_from": metadata.get("derived_from") if isinstance(metadata.get("derived_from"), list) else [],
+            "supersedes": metadata.get("supersedes") if isinstance(metadata.get("supersedes"), list) else [],
+            "superseded_by": metadata.get("superseded_by") if isinstance(metadata.get("superseded_by"), list) else [],
+            "deletion_request_id": metadata.get("deletion_request_id"), "deleted_at": metadata.get("deleted_at"),
+            "target_artifacts": metadata.get("target_artifacts") if isinstance(metadata.get("target_artifacts"), list) else [],
+            "extensions": extensions,
+        })
+        return _redact_metadata_value(metadata)
+
+    def add_source_message(self, session: HonchoSession, role: str, content: str, *,
+                           source_record_id: str | None = None, source_session_id: str | None = None,
+                           chunk_index: int = 0, chunk_count: int = 1,
+                           secret_rejected: bool = False) -> None:
+        created_at = _utc_now()
+        metadata = self._build_message_metadata(
+            session, role, created_at=created_at,
+            source_record_id=source_record_id or self.new_source_record_id(),
+            source_session_id=source_session_id, chunk_index=chunk_index, chunk_count=chunk_count,
+            secret_rejected=secret_rejected,
+        )
+        session.add_message(role, content, metadata=metadata, created_at=created_at)
 
     @property
     def honcho(self) -> Honcho:
@@ -235,7 +392,8 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
             key=key, user_peer_id=user_peer_id, assistant_peer_id=assistant_peer_id, honcho_session_id=honcho_session_id,
             messages=[
                 {"role": "assistant" if msg.peer_id == assistant_peer_id else "user", "content": msg.content,
-                 "timestamp": msg.created_at.isoformat() if msg.created_at else "", "_synced": True}
+                 "timestamp": msg.created_at.isoformat() if msg.created_at else "", "created_at": msg.created_at,
+                 "metadata": copy.deepcopy(getattr(msg, "metadata", None) or {}), "_synced": True}
                 for msg in existing_messages
             ],
         )
@@ -251,6 +409,19 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         if not new_messages:
             return True
 
+        # Assign provenance once before first attempt so retries preserve idempotency IDs.
+        for message in new_messages:
+            if not isinstance(message.get("metadata"), dict) or not message["metadata"].get("event_id"):
+                created_at = message.get("created_at")
+                if not isinstance(created_at, datetime):
+                    created_at = _utc_now()
+                    message["created_at"] = created_at
+                message["metadata"] = self._build_message_metadata(
+                    session, message["role"], created_at=created_at,
+                    source_record_id=self.new_source_record_id(), source_session_id=None,
+                    chunk_index=0, chunk_count=1,
+                )
+
         # Resolved inside the operation so a retry after a client rebuild gets fresh objects.
         def _sync_messages() -> int:
             user_peer = self._get_or_create_peer(session.user_peer_id)
@@ -258,7 +429,13 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
             honcho_session = self._sessions_cache.get(session.honcho_session_id)
             if honcho_session is None:
                 honcho_session, _ = self._get_or_create_honcho_session(session.honcho_session_id, user_peer, assistant_peer)
-            honcho_messages = [(user_peer if m["role"] == "user" else assistant_peer).message(m["content"]) for m in new_messages]
+            honcho_messages = [
+                (user_peer if m["role"] == "user" else assistant_peer).message(
+                    m["content"], metadata=_redact_metadata_value(m.get("metadata") or {}),
+                    created_at=m.get("created_at"),
+                )
+                for m in new_messages
+            ]
             honcho_session.add_messages(honcho_messages)
             return len(honcho_messages)
 

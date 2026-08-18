@@ -388,7 +388,7 @@ def _make_sync_manager(flaky_session, *, reauth_ok=True):
     cfg = HonchoClientConfig(host="hermes", api_key="hch-at-x", enabled=True)
     mgr = HonchoSessionManager(config=cfg)
     peer = MagicMock()
-    peer.message.side_effect = lambda content: content
+    peer.message.side_effect = lambda content, **kwargs: content
     mgr._get_or_create_peer = lambda peer_id: peer
     mgr._sessions_cache["s"] = flaky_session
     mgr._force_reauth = lambda: reauth_ok
@@ -745,12 +745,12 @@ class TestClientRebuildRetry:
         stale_session = MagicMock()
         stale_session.add_messages.side_effect = Exception("Invalid or expired access token")
         stale_peer = MagicMock()
-        stale_peer.message.side_effect = lambda content: content
+        stale_peer.message.side_effect = lambda content, **kwargs: content
 
         fresh_session = MagicMock()
         fresh_session.context.return_value = SimpleNamespace(summary=None, messages=[])
         fresh_peer = MagicMock()
-        fresh_peer.message.side_effect = lambda content: content
+        fresh_peer.message.side_effect = lambda content, **kwargs: content
         fresh_client = MagicMock()
         fresh_client.session.return_value = fresh_session
         fresh_client.peer.return_value = fresh_peer

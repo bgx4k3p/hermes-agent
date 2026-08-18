@@ -226,6 +226,13 @@ class _HostLookup:
         pairs = ((str(k).strip(), str(v).strip() if v is not None else "") for k, v in source.items())
         return {k: v for k, v in pairs if k and v}
 
+    def json_object(self, key: str) -> dict[str, Any]:
+        """JSON object where a host-level value replaces the root value."""
+        source = self.present(key)
+        if not isinstance(source, dict):
+            return {}
+        return {str(item_key): item_value for item_key, item_value in source.items()}
+
 
 def _is_local_base_url(base_url: str | None) -> bool:
     """True for loopback/RFC1918/link-local/ULA/CGNAT self-hosted Honcho URLs. Local
@@ -296,6 +303,7 @@ def _behavior_fields(look: _HostLookup, explicitly_configured: bool) -> dict[str
         "pin_peer_name": look.flag("pinUserPeer", "pinPeerName", default=False),
         "user_peer_aliases": look.string_map("userPeerAliases"),
         "runtime_peer_prefix": look.string("runtimePeerPrefix"),
+        "message_metadata": look.json_object("messageMetadata"),
         "save_messages": look.pick_set("saveMessages", True),
         "write_frequency": write_frequency,
         "context_tokens": look.parsed("contextTokens", int, None),
@@ -345,6 +353,8 @@ class HonchoClientConfig:
     # Gateway runtime user id -> stable Honcho peer; host map replaces root map.
     user_peer_aliases: dict[str, str] = field(default_factory=dict)
     runtime_peer_prefix: str = ""  # prefix for unknown runtime user ids, e.g. "telegram_"
+    # Static provider-native metadata; runtime provenance fields override conflicts.
+    message_metadata: dict[str, Any] = field(default_factory=dict)
     # Toggles
     enabled: bool = False
     save_messages: bool = True

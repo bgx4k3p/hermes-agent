@@ -73,6 +73,9 @@ CONFIG_SCHEMA = ProviderConfigSchema(
                default="true", group="Message writing"),
         _field("writeFrequency", "Write frequency", KIND_TEXT, "When to flush messages: async, turn, session, or every N turns.",
                default="async", info=_WRITE_FREQUENCY_INFO, placeholder="async | turn | session | N", group="Message writing"),
+        _field("messageMetadata", "Message metadata defaults", KIND_JSON,
+               "Static provider-native metadata defaults for saved messages; runtime provenance fields override conflicts.",
+               placeholder='{"schema": "example.provenance/v1", "extensions": {}}', group="Message writing"),
         # — Dialectic —
         _field("dialecticReasoningLevel", "Reasoning level", KIND_SELECT, "Reasoning effort for dialectic (peer.chat) calls.",
                default="low", options=_REASONING_LEVELS, group="Dialectic"),

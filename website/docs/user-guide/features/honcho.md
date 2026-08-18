@@ -125,6 +125,7 @@ When pointing Hermes at a self-hosted Honcho server, `hermes honcho setup` (and 
 | `recallMode` | `'hybrid'` | `hybrid` (auto-inject + tools), `context` (inject only), `tools` (tools only) |
 | `writeFrequency` | `'async'` | When to flush messages: `async` (background thread), `turn` (sync), `session` (batch on end), or integer N |
 | `saveMessages` | `true` | Whether to persist messages to Honcho API |
+| `messageMetadata` | `{}` | Static JSON defaults merged into provider-native message metadata. Runtime identity, session, timestamp, event, source, channel, and chunk fields always override conflicts; metadata is force-redacted before writes |
 | `observationMode` | `'directional'` | `directional` (all on) or `unified` (shared pool). Override with `observation` object for granular control |
 | `messageMaxChars` | `25000` | Max chars per message sent via `add_messages()`. Chunked if exceeded |
 | `dialecticMaxInputChars` | `10000` | Max chars for dialectic query input to `peer.chat()` |

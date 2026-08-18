@@ -298,6 +298,8 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             honcho=get_honcho_client(cfg), config=cfg, context_tokens=cfg.context_tokens,
             runtime_user_peer_name=kwargs.get("user_id") or None,
             runtime_user_peer_name_alt=kwargs.get("user_id_alt") or None,
+            provenance_context=kwargs,
+            source_session_id=session_id,
         )
         self._session_key = self._resolve_session_key(cfg, session_id, **kwargs)
         logger.debug("Honcho session key resolved: %s", self._session_key)
@@ -595,8 +597,16 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         def _sync():
             session = self._manager.get_or_create(self._session_key)
             for role, content in (("user", clean_user_content), ("assistant", clean_assistant_content)):
-                for chunk in self._chunk_message(content, msg_limit) if content else ():
-                    session.add_message(role, chunk)
+                chunks = self._chunk_message(content, msg_limit) if content else ()
+                source_record_id = self._manager.new_source_record_id()
+                for index, chunk in enumerate(chunks):
+                    self._manager.add_source_message(
+                        session, role, chunk,
+                        source_record_id=source_record_id,
+                        source_session_id=session_id or None,
+                        chunk_index=index,
+                        chunk_count=len(chunks),
+                    )
             # save() (not _flush_session) so writeFrequency batching is honored.
             self._manager.save(session)
 
