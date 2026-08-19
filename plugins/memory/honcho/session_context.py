@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Callable
 
 from plugins.memory.honcho.session_auth import HonchoAuthError
@@ -10,6 +11,34 @@ from plugins.memory.honcho.session_auth import HonchoAuthError
 logger = logging.getLogger("plugins.memory.honcho.session")
 
 _FAILED = object()  # sentinel: a guarded call raised (distinct from a legitimately empty/None result)
+_SEARCH_TERM_RE = re.compile(r"[A-Za-z0-9_:-]{3,}")
+
+
+def _relevant_search_snippet(content: str, query: str, limit: int = 1200) -> str:
+    """Clip a search hit around its most discriminating query term."""
+    if len(content) <= limit:
+        return content
+    folded = content.casefold()
+    query_folded = (query or "").strip().casefold()
+    position = folded.find(query_folded) if query_folded else -1
+    if position < 0:
+        terms = {term.casefold() for term in _SEARCH_TERM_RE.findall(query or "")}
+        candidates = [(folded.count(term), -len(term), folded.find(term))
+                      for term in terms if term in folded]
+        if candidates:
+            _count, _negative_length, position = min(candidates)
+    if position < 0:
+        return content[:limit]
+    start = max(0, position - limit // 4)
+    end = min(len(content), start + limit)
+    if end - start < limit:
+        start = max(0, end - limit)
+    snippet = content[start:end]
+    if start:
+        snippet = "…" + snippet
+    if end < len(content):
+        snippet += "…"
+    return snippet
 
 
 class SessionContextMixin:
@@ -207,7 +236,7 @@ class SessionContextMixin:
             author = getattr(m, "peer_id", "") or "unknown"
             who = "assistant" if author == session.assistant_peer_id else author
             sess = getattr(m, "session_id", "") or ""
-            entry = f"[{who}{f' · {sess}' if sess else ''}] {content[:1200]}"
+            entry = f"[{who}{f' · {sess}' if sess else ''}] {_relevant_search_snippet(content, q, limit=1200)}"
             # Budget left after the joined snippets so far plus the separator this entry would need.
             remaining = char_budget - len("\n\n".join(lines)) - (2 if lines else 0)
             if remaining <= 0:

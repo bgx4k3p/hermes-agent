@@ -144,6 +144,31 @@ class TestPeerLookupHelpers:
         honcho_client.search.assert_called_once()
         user_peer.search.assert_called_once_with("BC_CANARY_PROVIDER", limit=10)
 
+    def test_search_context_centers_long_result_on_rare_query_term(self):
+        """ACP prompts can put the matched user event after a huge system prefix."""
+        mgr, session = self._make_cached_manager()
+        honcho_client = MagicMock()
+        marker = "AGADOR_BUZZ_E2E_20260819_1730"
+        honcho_client.search.return_value = [
+            SimpleNamespace(
+                content=("Buzz platform operating instructions. " * 200)
+                + f"Remember this disposable shared-memory marker: {marker}",
+                peer_id=session.user_peer_id,
+                session_id="buzz-acp-session",
+                id="m1",
+            )
+        ]
+
+        with patch.object(
+            HonchoSessionManager,
+            "honcho",
+            new_callable=lambda: property(lambda _manager: honcho_client),
+        ):
+            result = mgr.search_context(session.key, "Buzz E2E marker")
+
+        assert marker in result
+        assert len(result) <= 3200
+
 
     def test_create_conclusion_defaults_to_user_target(self):
         mgr, session = self._make_cached_manager()
