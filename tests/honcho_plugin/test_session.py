@@ -96,9 +96,12 @@ class TestPeerLookupHelpers:
             SimpleNamespace(content="Robert runs neuralancer", peer_id="hermes", session_id="s-old", id="m1"),
             SimpleNamespace(content="I founded neuralancer in 2019", peer_id="robert", session_id="s-old", id="m2"),
         ]
+        mgr._get_or_create_peer = MagicMock()
         with patch.object(HonchoSessionManager, "honcho", new_callable=lambda: property(lambda s: honcho_client)):
             result = mgr.search_context(session.key, "neuralancer")
 
+        # A successful perspective search must not issue the narrower fallback.
+        mgr._get_or_create_peer.assert_not_called()
         # Returns the actual message content, ranked.
         assert "Robert runs neuralancer" in result
         assert "neuralancer in 2019" in result
@@ -109,6 +112,37 @@ class TestPeerLookupHelpers:
         # Assistant-authored messages are labeled so the model can tell
         # user-stated facts from assistant-derived ones.
         assert "[assistant" in result
+
+    def test_search_context_falls_back_when_perspective_search_is_empty(self):
+        """v3.0.12 can accept peer_perspective but return no messages.
+
+        An empty compatibility response must use the peer-authored fallback,
+        not masquerade as a successful no-results search.
+        """
+        mgr, session = self._make_cached_manager()
+        honcho_client = MagicMock()
+        honcho_client.search.return_value = []
+        user_peer = MagicMock()
+        user_peer.search.return_value = [
+            SimpleNamespace(
+                content="BC_CANARY_PROVIDER user",
+                peer_id=session.user_peer_id,
+                session_id="s-old",
+                id="m1",
+            )
+        ]
+        mgr._get_or_create_peer = MagicMock(return_value=user_peer)
+
+        with patch.object(
+            HonchoSessionManager,
+            "honcho",
+            new_callable=lambda: property(lambda _manager: honcho_client),
+        ):
+            result = mgr.search_context(session.key, "BC_CANARY_PROVIDER")
+
+        assert "BC_CANARY_PROVIDER user" in result
+        honcho_client.search.assert_called_once()
+        user_peer.search.assert_called_once_with("BC_CANARY_PROVIDER", limit=10)
 
 
     def test_create_conclusion_defaults_to_user_target(self):
