@@ -17,6 +17,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from agent.memory_manager import sanitize_context
 from agent.memory_provider import MemoryProvider, is_trivial_prompt
+from agent.redact import redact_sensitive_text
 from plugins.memory.honcho.client import spawn_context_thread
 from plugins.memory.honcho.dialectic import DialecticMixin
 from plugins.memory.honcho.session import classify_delivery_error
@@ -24,6 +25,29 @@ from plugins.memory.honcho.tool_schemas import ALL_TOOL_SCHEMAS
 from tools.registry import tool_error
 
 logger = logging.getLogger(__name__)
+
+_SECRET_REJECTED_CONTENT = "[Secret-shaped content rejected before Honcho semantic storage.]"
+
+
+def _protect_semantic_content(content: str) -> tuple[str, bool]:
+    """Reject a whole semantic record when mandatory redaction changes it."""
+    clean = sanitize_context(content or "").strip()
+    if not clean:
+        return "", False
+    redacted = redact_sensitive_text(clean, force=True, redact_url_credentials=True)
+    return (_SECRET_REJECTED_CONTENT, True) if redacted != clean else (clean, False)
+
+
+def _contains_secret_shaped_content(value: Any) -> bool:
+    """Detect secrets recursively without returning or logging their values."""
+    if isinstance(value, str):
+        return _protect_semantic_content(value)[1]
+    if isinstance(value, (list, tuple)):
+        return any(_contains_secret_shaped_content(item) for item in value)
+    if isinstance(value, dict):
+        return any(_contains_secret_shaped_content(key) or _contains_secret_shaped_content(item)
+                   for key, item in value.items())
+    return False
 
 
 # Gateway-internal notifications arrive through the same user-role channel as genuine
@@ -588,8 +612,8 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             return
 
         msg_limit = self._config.message_max_chars if self._config else 25000
-        clean_user_content = sanitize_context(user_content or "").strip()
-        clean_assistant_content = sanitize_context(assistant_content or "").strip()
+        clean_user_content, user_secret_rejected = _protect_semantic_content(user_content or "")
+        clean_assistant_content, assistant_secret_rejected = _protect_semantic_content(assistant_content or "")
         # Skip only when the whole turn is empty: an interrupted or tool-only turn can have
         # an empty assistant side, and the user's message must still be persisted.
         if not clean_user_content and not clean_assistant_content:
@@ -607,6 +631,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
                         source_session_id=session_id or None,
                         chunk_index=index,
                         chunk_count=len(chunks),
+                        secret_rejected=user_secret_rejected if role == "user" else assistant_secret_rejected,
                     )
             # save() (not _flush_session) so writeFrequency batching is honored.
             self._manager.save(session)
@@ -638,6 +663,9 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         if action != "add" or target != "user" or not content:
             return
         if not self._writes_enabled() or not self._ready_or_kick_init():
+            return
+        if _contains_secret_shaped_content(content):
+            logger.info("Honcho memory mirror rejected secret-shaped content")
             return
         self._memwrite_thread = self._spawn_write(lambda: self._manager.create_conclusion(self._session_key, content),
                                                   "honcho-memwrite", "Honcho memory mirror failed: %s")
@@ -691,6 +719,8 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
     def _tool_profile(self, args: dict) -> str:
         peer = args.get("peer", "user")
         if card_update := args.get("card"):
+            if _contains_secret_shaped_content(card_update):
+                return tool_error("Secret-shaped content was rejected before Honcho semantic storage.")
             result = self._manager.set_peer_card(self._session_key, card_update, peer=peer)
             if result is None:
                 return tool_error("Failed to update peer card.")
@@ -759,6 +789,8 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             if self._manager.delete_conclusion(self._session_key, delete_id, peer=peer):
                 return json.dumps({"result": f"Conclusion {delete_id} deleted."})
             return tool_error(f"Failed to delete conclusion {delete_id}.")
+        if _contains_secret_shaped_content(conclusion):
+            return tool_error("Secret-shaped content was rejected before Honcho semantic storage.")
         if self._manager.create_conclusion(self._session_key, conclusion, peer=peer):
             return json.dumps({"result": f"Conclusion saved for {peer}: {conclusion}"})
         return tool_error("Failed to save conclusion.")

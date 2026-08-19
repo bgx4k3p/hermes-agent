@@ -299,7 +299,7 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         metadata.update({
             "schema": metadata.get("schema") or "hermes.provenance/v1", "event_id": str(uuid.uuid4()),
             "record_kind": "source_event",
-            "source_kind": "secret_rejected" if secret_rejected else ("user_statement" if role == "user" else "assistant_statement"),
+            "source_kind": "user_statement" if role == "user" else "assistant_statement",
             "human_peer": session.user_peer_id, "ai_peer": session.assistant_peer_id,
             "interface": str(context.get("platform") or "cli"), "machine": _resolve_machine_identity(context),
             "runtime": f"hermes:{profile}:{agent_context}",
@@ -311,7 +311,7 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
             "confidence": metadata.get("confidence"),
             "verification_state": metadata.get("verification_state") or "unverified",
             "review_state": metadata.get("review_state") or "captured",
-            "sensitivity": metadata.get("sensitivity") or "private",
+            "sensitivity": "secret_rejected" if secret_rejected else metadata.get("sensitivity") or "private",
             "retention_class": metadata.get("retention_class") or "semantic",
             "derived_from": metadata.get("derived_from") if isinstance(metadata.get("derived_from"), list) else [],
             "supersedes": metadata.get("supersedes") if isinstance(metadata.get("supersedes"), list) else [],
