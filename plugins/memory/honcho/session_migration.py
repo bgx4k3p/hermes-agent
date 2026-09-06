@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 from plugins.memory.honcho.session_auth import HonchoAuthError
+from plugins.memory.honcho.semantic_safety import is_safe_semantic_payload
 
 logger = logging.getLogger("plugins.memory.honcho.session")
 
@@ -52,6 +53,25 @@ class SessionMigrationMixin:
             content = filepath.read_text(encoding="utf-8").strip() if filepath.exists() else ""
             if not content:
                 continue
+            metadata = {
+                "source": "local_memory",
+                "original_file": filename,
+                "target_peer": target_kind,
+            }
+            semantic_payload = {
+                "content": content,
+                "source": "local_memory",
+                "filename": filename,
+                "upload_name": upload_name,
+                "description": description,
+                "metadata": metadata,
+            }
+            if not is_safe_semantic_payload(semantic_payload):
+                logger.warning(
+                    "Skipping %s migration: secret-shaped content rejected before Honcho semantic storage",
+                    filename,
+                )
+                continue
             target_peer_id = session.user_peer_id if target_kind == "user" else session.assistant_peer_id
             wrapped = ("<prior_memory_file>\n<context>\n"
                        "This file was consolidated from local conversations BEFORE Honcho was activated.\n"
@@ -59,14 +79,18 @@ class SessionMigrationMixin:
                        f"</context>\n\n{content}\n</prior_memory_file>\n")
 
             def _upload() -> None:
-                self._sdk_session(session.honcho_session_id).upload_file(
-                    file=(upload_name, wrapped.encode("utf-8"), "text/plain"),
-                    peer=self._get_or_create_peer(target_peer_id),
-                    metadata={"source": "local_memory", "original_file": filename, "target_peer": target_kind},
+                self._authed_semantic_write(
+                    "memory migration upload boundary",
+                    {**semantic_payload, "content": wrapped},
+                    lambda: self._sdk_session(session.honcho_session_id).upload_file(
+                        file=(upload_name, wrapped.encode("utf-8"), "text/plain"),
+                        peer=self._get_or_create_peer(target_peer_id),
+                        metadata=metadata,
+                    ),
                 )
 
             try:
-                self._authed_call("memory migration upload", _upload)
+                _upload()
                 logger.info("Uploaded %s to Honcho for %s (%s peer)", filename, session_key, target_kind)
                 uploaded = True
             except HonchoAuthError:

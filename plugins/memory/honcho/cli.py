@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import copy
 from pathlib import Path
 
 from hermes_constants import get_hermes_home
@@ -20,6 +21,7 @@ _INHERITED_KEYS = (
     "recallMode", "writeFrequency", "sessionStrategy", "contextTokens",
     "dialecticReasoningLevel", "dialecticDynamic", "dialecticMaxChars",
     "messageMaxChars", "dialecticMaxInputChars", "saveMessages", "observation",
+    "messageMetadata",
 )
 # clone_honcho_for_profile also carries the operator's runtime-to-peer routing intent.
 _CLONE_KEYS = _INHERITED_KEYS[:3] + ("sessionPeerPrefix",) + _INHERITED_KEYS[3:] + (
@@ -193,7 +195,7 @@ def _inherit_defaults(block: dict, default_block: dict, cfg: dict, keys: tuple[s
     """Copy ``keys`` (and peerName) from the default host block into ``block`` where unset."""
     for key in keys:
         if (val := default_block.get(key)) is not None and key not in block:
-            block[key] = val
+            block[key] = copy.deepcopy(val)
     if (peer_name := _pref(default_block, cfg, "peerName")) and "peerName" not in block:
         block["peerName"] = peer_name
 
@@ -473,17 +475,17 @@ def _ensure_sdk_installed() -> bool:
     except ImportError:
         pass
     print("  honcho-ai is not installed.")
-    if not _yes(_prompt("Install it now? (honcho-ai==2.2.0)", default="y")):
-        print("  Skipping install. Run: pip install 'honcho-ai==2.2.0'\n")
+    if not _yes(_prompt("Install it now? (honcho-ai==2.4.0)", default="y")):
+        print("  Skipping install. Run: pip install 'honcho-ai==2.4.0'\n")
         return False
     print("  Installing honcho-ai...", flush=True)
     from tools.lazy_deps import install_specs  # env-aware: sealed hosted venvs redirect to the data volume
-    result = install_specs(["honcho-ai==2.2.0"])
+    result = install_specs(["honcho-ai==2.4.0"])
     if result.ok:
         print("  Installed.\n")
         return True
     print(f"  Cannot install: {result.reason}\n" if result.blocked else
-          f"  Install failed:\n{(result.stderr or '').strip()}\n  Run manually: uv pip install 'honcho-ai==2.2.0'\n")
+          f"  Install failed:\n{(result.stderr or '').strip()}\n  Run manually: uv pip install 'honcho-ai==2.4.0'\n")
     return False
 
 

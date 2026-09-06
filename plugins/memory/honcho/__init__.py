@@ -17,43 +17,18 @@ from typing import Any, Callable, Dict, List, Optional
 
 from agent.memory_manager import sanitize_context
 from agent.memory_provider import MemoryProvider, is_trivial_prompt
-from agent.redact import redact_sensitive_text
 from plugins.memory.honcho.client import spawn_context_thread
 from plugins.memory.honcho.dialectic import DialecticMixin
+from plugins.memory.honcho.semantic_safety import (
+    SECRET_REJECTED_CONTENT as _SECRET_REJECTED_CONTENT,
+    contains_secret_shaped_content as _contains_secret_shaped_content,
+    protect_semantic_content as _protect_semantic_content,
+)
 from plugins.memory.honcho.session import classify_delivery_error
 from plugins.memory.honcho.tool_schemas import ALL_TOOL_SCHEMAS
 from tools.registry import tool_error
 
 logger = logging.getLogger(__name__)
-
-_SECRET_REJECTED_CONTENT = (
-    "[Secret-shaped content rejected before Honcho semantic storage.]"
-)
-
-
-def _protect_semantic_content(content: str) -> tuple[str, bool]:
-    """Reject a whole semantic record when mandatory redaction changes it."""
-    clean = sanitize_context(content or "").strip()
-    if not clean:
-        return "", False
-    redacted = redact_sensitive_text(clean, force=True, redact_url_credentials=True)
-    return (_SECRET_REJECTED_CONTENT, True) if redacted != clean else (clean, False)
-
-
-def _contains_secret_shaped_content(value: Any) -> bool:
-    """Detect secrets recursively without returning or logging their values."""
-    if isinstance(value, str):
-        return _protect_semantic_content(value)[1]
-    if isinstance(value, (list, tuple)):
-        return any(_contains_secret_shaped_content(item) for item in value)
-    if isinstance(value, dict):
-        return any(
-            _contains_secret_shaped_content(key)
-            or _contains_secret_shaped_content(item)
-            for key, item in value.items()
-        )
-    return False
-
 
 # Gateway-internal notifications arrive through the same user-role channel as genuine
 # user messages; they are execution metadata and must never become durable memory.
@@ -827,7 +802,9 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             return
         if not self._writes_enabled() or not self._ready_or_kick_init():
             return
-        if _contains_secret_shaped_content(content):
+        if _contains_secret_shaped_content(
+            {"content": content, "metadata": metadata or {}}
+        ):
             logger.info("Honcho memory mirror rejected secret-shaped content")
             return
         self._memwrite_thread = self._spawn_write(
@@ -923,7 +900,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
     def _tool_search(self, args: dict) -> str:
         if not (query := (args.get("query") or "").strip()):
             return tool_error("Missing required parameter: query")
-        max_tokens = min(int(args.get("max_tokens", 800)), 2000)
+        max_tokens = max(50, min(int(args.get("max_tokens", 800)), 2000))
         result = self._manager.search_context(
             self._session_key,
             query,
@@ -1272,7 +1249,9 @@ SEARCH_SCHEMA = {
             },
             "max_tokens": {
                 "type": "integer",
-                "description": "Approximate budget for returned excerpts (default 800, max 2000). Larger budgets return more/longer ranked snippets.",
+                "minimum": 50,
+                "maximum": 2000,
+                "description": "Approximate budget for returned excerpts (default 800, range 50-2000). Larger budgets return more/longer ranked snippets.",
             },
             "peer": {
                 "type": "string",

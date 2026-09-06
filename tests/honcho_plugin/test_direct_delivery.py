@@ -76,15 +76,15 @@ def _wire_delivery(mgr, session, side_effect):
     return created, sdk_session
 
 
-def test_terminal_failure_returns_safe_outcome_and_preserves_unsynced(caplog):
+def test_secret_payload_is_rejected_before_sdk_and_preserves_unsynced(caplog):
     secret_content = "password=message-secret"
     secret_error = "token=error-secret https://user:pass@example.invalid/private"
     mgr = _manager()
     session = _session()
     mgr.add_source_message(session, "user", secret_content)
-    _wire_delivery(mgr, session, RuntimeError(secret_error))
+    _created, sdk_session = _wire_delivery(mgr, session, RuntimeError(secret_error))
 
-    with caplog.at_level(logging.ERROR, logger="plugins.memory.honcho.session"):
+    with caplog.at_level(logging.WARNING, logger="plugins.memory.honcho.session"):
         outcome = mgr._flush_session(session)
 
     assert outcome == DeliveryOutcome(
@@ -92,16 +92,17 @@ def test_terminal_failure_returns_safe_outcome_and_preserves_unsynced(caplog):
         attempted_count=1,
         delivered_count=0,
         pending_count=1,
-        error_category="sdk_error",
+        error_category="semantic_payload_rejected",
         http_status=None,
     )
     assert outcome is mgr.last_delivery_outcome
     assert session.messages[0]["_synced"] is False
+    sdk_session.add_messages.assert_not_called()
     log_text = caplog.text
     assert secret_content not in log_text
     assert secret_error not in log_text
     assert "example.invalid" not in log_text
-    assert "terminal failure" in log_text
+    assert "semantic payload rejected" in log_text
 
 
 def test_later_in_process_flush_retries_same_provenance_and_delivers():

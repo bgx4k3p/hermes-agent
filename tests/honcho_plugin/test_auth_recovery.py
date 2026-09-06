@@ -813,6 +813,59 @@ class TestClientRebuildRetry:
         assert all(m["_synced"] for m in session.messages)
         assert mgr._auth_failure is None
 
+    def test_identity_seed_retry_rebuilds_peer_message_and_session_objects(
+        self, tmp_path, monkeypatch
+    ):
+        stale_message = object()
+        fresh_message = object()
+        stale_peer = MagicMock()
+        stale_peer.message.return_value = stale_message
+        fresh_peer = MagicMock()
+        fresh_peer.message.return_value = fresh_message
+
+        stale_session = MagicMock()
+        stale_session.add_messages.side_effect = Exception(
+            "Invalid or expired access token"
+        )
+        fresh_session = MagicMock()
+        fresh_client = MagicMock()
+        fresh_client.peer.return_value = fresh_peer
+        fresh_client.session.return_value = fresh_session
+
+        _wire_rebuild(tmp_path, monkeypatch, fresh_client)
+
+        from plugins.memory.honcho import session_context as context_mod
+
+        validated_payloads = []
+        real_require_safe = context_mod.require_safe_semantic_payload
+
+        def _record_validation(payload):
+            validated_payloads.append(payload)
+            real_require_safe(payload)
+
+        monkeypatch.setattr(
+            context_mod, "require_safe_semantic_payload", _record_validation
+        )
+
+        cfg = HonchoClientConfig(host="hermes", api_key="hch-at-x", enabled=True)
+        mgr = HonchoSessionManager(config=cfg)
+        mgr._peers_cache["a"] = stale_peer
+        mgr._sessions_cache["s"] = stale_session
+        mgr._cache["k"] = HonchoSession(
+            key="k", user_peer_id="u", assistant_peer_id="a", honcho_session_id="s"
+        )
+
+        assert mgr.seed_ai_identity("k", "Benign identity") is True
+
+        stale_peer.message.assert_called_once()
+        stale_session.add_messages.assert_called_once_with([stale_message])
+        fresh_peer.message.assert_called_once()
+        fresh_session.add_messages.assert_called_once_with([fresh_message])
+        assert len(validated_payloads) == 2
+        assert validated_payloads[0] == validated_payloads[1]
+        assert validated_payloads[0]["source"] == "manual"
+        assert "Benign identity" in validated_payloads[0]["content"]
+
     def test_context_retry_uses_rebuilt_peer_not_stale(self, tmp_path, monkeypatch):
         stale_peer = MagicMock()
         stale_peer.context.side_effect = Exception("Invalid or expired access token")

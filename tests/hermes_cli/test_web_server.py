@@ -904,7 +904,7 @@ class TestWebServerEndpoints:
         import hermes_cli.web_server as web_server
         from tools import lazy_deps as ld
 
-        # honcho declares pip_dependencies: [honcho-ai]; force it missing.
+        # honcho declares its exact SDK pin; force it missing.
         monkeypatch.setattr(_web_server_memory, "_dependency_importable", lambda dep: False)
 
         installed = []
@@ -912,7 +912,7 @@ class TestWebServerEndpoints:
         def fake_install_specs(specs, *, timeout=300):
             installed.append(tuple(specs))
             return ld.InstallSpecsResult(
-                ok=True, command="uv pip install --target /opt/data/lazy-packages honcho-ai",
+                ok=True, command="uv pip install --target /opt/data/lazy-packages honcho-ai==2.4.0",
                 stdout="ok", stderr="",
             )
 
@@ -937,7 +937,7 @@ class TestWebServerEndpoints:
         pip_rows = [row for row in data["results"] if row["kind"] == "pip"]
         assert pip_rows and pip_rows[0]["status"] == "installed"
         assert "--target /opt/data/lazy-packages" in pip_rows[0]["command"]
-        assert installed == [("honcho-ai",)]
+        assert installed == [("honcho-ai==2.4.0",)]
 
 
 

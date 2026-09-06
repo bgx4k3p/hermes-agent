@@ -6,7 +6,7 @@ AI-native cross-session user modeling with multi-pass dialectic reasoning, sessi
 
 ## Requirements
 
-- `pip install honcho-ai`
+- `pip install 'honcho-ai==2.4.0'`
 - A Honcho Cloud account — connect via OAuth sign-in or an API key from
   [app.honcho.dev](https://app.honcho.dev) — or a self-hosted instance
 
@@ -216,6 +216,7 @@ Pick **[e]** at the prompt to set the three keys directly instead of going throu
 |-----|------|---------|-------------|
 | `writeFrequency` | string/int | `"async"` | `"async"` (background), `"turn"` (sync per turn), `"session"` (batch on end), or integer N (every N turns) |
 | `saveMessages` | bool | `true` | Persist messages to Honcho API. When `false`, all automatic writes are skipped — raw turns (`sync_turn`), conclusion mirroring (`on_memory_write`), and session-end/shutdown flushes — while read and tools paths stay fully functional. |
+| `messageMetadata` | object | `{}` | Static defaults merged into provider-native message metadata. Runtime identity, session, timestamp, event, source, channel, and chunk fields override conflicts; metadata is force-redacted before writes. |
 
 Message writes use the Honcho SDK's bounded transport retries. If those retries
 are exhausted, Hermes remains available, records a content-free delivery

@@ -11,6 +11,7 @@ Covers:
 
 import json
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -517,6 +518,87 @@ class TestMemoryFileMigrationTargets:
         assert peer_by_upload_name["consolidated_memory.md"] is user_peer
         assert peer_by_upload_name["user_profile.md"] is user_peer
         assert peer_by_upload_name["agent_soul.md"] is ai_peer
+
+    def test_secret_file_is_rejected_before_upload_while_benign_file_migrates(
+        self, tmp_path, make_manager
+    ):
+        mgr = make_manager(write_frequency="turn", peer_name="custom-user")
+        session, honcho_session = _prime_migration_session(
+            mgr, "cli:test", "cli-test"
+        )
+        mgr._peers_cache[session.user_peer_id] = MagicMock()
+        mgr._peers_cache[session.assistant_peer_id] = MagicMock()
+        secret = "sk-" + "AGADORFAKESECRET1234567890ABCDEF"
+        (tmp_path / "MEMORY.md").write_text(
+            f"Never upload this credential: {secret}", encoding="utf-8"
+        )
+        (tmp_path / "USER.md").write_text("User prefers concise replies", encoding="utf-8")
+
+        uploaded = mgr.migrate_memory_files(session.key, str(tmp_path))
+
+        assert uploaded is True
+        honcho_session.upload_file.assert_called_once()
+        assert honcho_session.upload_file.call_args.kwargs["file"][0] == "user_profile.md"
+        assert secret not in repr(honcho_session.upload_file.call_args)
+
+    @pytest.mark.parametrize("filename", ["MEMORY.md", "USER.md", "SOUL.md"])
+    def test_each_automatic_memory_file_rejects_entire_secret_payload(
+        self, tmp_path, make_manager, filename
+    ):
+        mgr = make_manager(write_frequency="turn", peer_name="custom-user")
+        session, honcho_session = _prime_migration_session(
+            mgr, "cli:test", "cli-test"
+        )
+        secret = "sk-" + "AGADORFAKESECRET1234567890ABCDEF"
+        (tmp_path / filename).write_text(
+            f"Benign prefix, credential {secret}, benign suffix", encoding="utf-8"
+        )
+
+        assert mgr.migrate_memory_files(session.key, str(tmp_path)) is False
+        honcho_session.upload_file.assert_not_called()
+
+    def test_secret_ai_identity_seed_is_rejected_before_sdk_message(self, make_manager):
+        mgr = make_manager(write_frequency="turn", peer_name="custom-user")
+        session, honcho_session = _prime_migration_session(
+            mgr, "cli:test", "cli-test"
+        )
+        assistant_peer = MagicMock()
+        mgr._peers_cache[session.assistant_peer_id] = assistant_peer
+        secret = "sk-" + "AGADORFAKESECRET1234567890ABCDEF"
+
+        seeded = mgr.seed_ai_identity(
+            session.key, f"Agent identity with credential {secret}", source="SOUL.md"
+        )
+
+        assert seeded is False
+        assistant_peer.message.assert_not_called()
+        honcho_session.add_messages.assert_not_called()
+
+    def test_cli_identity_secret_is_rejected_before_sdk_message(
+        self, tmp_path, make_manager, monkeypatch, capsys
+    ):
+        from plugins.memory.honcho import cli
+
+        mgr = make_manager(write_frequency="turn", peer_name="custom-user")
+        session, honcho_session = _prime_migration_session(
+            mgr, "cli:test", "cli-test"
+        )
+        assistant_peer = MagicMock()
+        mgr._peers_cache[session.assistant_peer_id] = assistant_peer
+        secret = "sk-" + "AGADORFAKESECRET1234567890ABCDEF"
+        identity_file = tmp_path / "SOUL.md"
+        identity_file.write_text(f"Identity credential: {secret}", encoding="utf-8")
+        monkeypatch.setattr(cli, "_read_config", lambda: {"apiKey": "test-key"})
+        monkeypatch.setattr(cli, "_resolve_api_key", lambda _cfg: "test-key")
+        monkeypatch.setattr(cli, "_host_key", lambda: "hermes")
+        monkeypatch.setattr(cli, "_connect", lambda _host: (mgr._config, MagicMock()))
+        monkeypatch.setattr(cli, "_session_manager", lambda *_args: (mgr, session.key))
+
+        cli.cmd_identity(SimpleNamespace(file=str(identity_file), show=False))
+
+        assert "Failed to seed identity" in capsys.readouterr().out
+        assistant_peer.message.assert_not_called()
+        honcho_session.add_messages.assert_not_called()
 
 
 class TestMemoryFileMigrationOwnerGate:

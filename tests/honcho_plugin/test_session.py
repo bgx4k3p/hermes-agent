@@ -10,6 +10,7 @@ from plugins.memory.honcho.session import (
     HonchoSession,
     HonchoSessionManager,
 )
+from plugins.memory.honcho.session_context import _relevant_search_snippet
 from plugins.memory.honcho import HonchoMemoryProvider
 
 
@@ -182,6 +183,90 @@ class TestPeerLookupHelpers:
 
         assert marker in result
         assert len(result) <= 3200
+
+    def test_search_context_small_budget_preserves_match_within_exact_bound(self):
+        mgr, session = self._make_cached_manager()
+        honcho_client = MagicMock()
+        marker = "AGADOR_SMALL_BUDGET_MARKER"
+        honcho_client.search.return_value = [
+            SimpleNamespace(
+                content=("long irrelevant prefix " * 100)
+                + marker
+                + (" long irrelevant suffix" * 100),
+                peer_id=session.user_peer_id,
+                session_id="historical-session",
+                id="m1",
+            )
+        ]
+
+        with patch.object(
+            HonchoSessionManager,
+            "honcho",
+            new_callable=lambda: property(lambda _manager: honcho_client),
+        ):
+            result = mgr.search_context(session.key, marker, max_tokens=50)
+
+        assert marker in result
+        assert len(result) <= 200
+
+    def test_search_context_long_suffix_preserves_match_and_budget(self):
+        mgr, session = self._make_cached_manager()
+        honcho_client = MagicMock()
+        marker = "AGADOR_SUFFIX_MARKER"
+        honcho_client.search.return_value = [
+            SimpleNamespace(
+                content="brief prefix " + marker + (" trailing material" * 1000),
+                peer_id=session.user_peer_id,
+                session_id="historical-session",
+                id="m1",
+            )
+        ]
+
+        with patch.object(
+            HonchoSessionManager,
+            "honcho",
+            new_callable=lambda: property(lambda _manager: honcho_client),
+        ):
+            result = mgr.search_context(session.key, marker, max_tokens=51)
+
+        assert marker in result
+        assert len(result) <= 204
+
+    def test_snippet_exact_marker_budget_preserves_the_whole_marker(self):
+        marker = "AGADOR_EXACT_MARKER"
+        content = ("irrelevant " * 20) + marker + (" trailing" * 20)
+
+        result = _relevant_search_snippet(content, marker, limit=len(marker))
+
+        assert result == marker
+        assert len(result) == len(marker)
+
+    def test_search_prioritizes_later_lexical_hit_over_earlier_semantic_hit(self):
+        mgr, session = self._make_cached_manager()
+        honcho_client = MagicMock()
+        marker = "AGADOR_LEXICAL_PRIORITY"
+        honcho_client.search.return_value = [
+            SimpleNamespace(
+                content="semantic-only result " * 100,
+                peer_id=session.user_peer_id,
+                session_id="first-session",
+            ),
+            SimpleNamespace(
+                content=("irrelevant " * 100) + marker + (" trailing" * 100),
+                peer_id="p" * 90,
+                session_id="s" * 80,
+            ),
+        ]
+
+        with patch.object(
+            HonchoSessionManager,
+            "honcho",
+            new_callable=lambda: property(lambda _manager: honcho_client),
+        ):
+            result = mgr.search_context(session.key, marker, max_tokens=50)
+
+        assert marker in result
+        assert len(result) <= 200
 
     def test_create_conclusion_defaults_to_user_target(self):
         mgr, session = self._make_cached_manager()

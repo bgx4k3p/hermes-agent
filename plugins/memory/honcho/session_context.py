@@ -7,6 +7,10 @@ import re
 from typing import Any, Callable
 
 from plugins.memory.honcho.session_auth import HonchoAuthError
+from plugins.memory.honcho.semantic_safety import (
+    is_safe_semantic_payload,
+    require_safe_semantic_payload,
+)
 
 logger = logging.getLogger("plugins.memory.honcho.session")
 
@@ -17,33 +21,65 @@ _SEARCH_TERM_RE = re.compile(r"[A-Za-z0-9_:-]{3,}")
 
 
 def _relevant_search_snippet(content: str, query: str, limit: int = 1200) -> str:
-    """Clip a search hit around its most discriminating query term."""
+    """Clip around the best query term without exceeding ``limit`` characters."""
+    if limit <= 0:
+        return ""
     if len(content) <= limit:
         return content
     folded = content.casefold()
     query_folded = (query or "").strip().casefold()
-    position = folded.find(query_folded) if query_folded else -1
+    position = (
+        folded.find(query_folded)
+        if query_folded and len(query_folded) <= limit
+        else -1
+    )
+    match_length = len(query_folded) if position >= 0 else 0
     if position < 0:
         terms = {term.casefold() for term in _SEARCH_TERM_RE.findall(query or "")}
         candidates = [
-            (folded.count(term), -len(term), folded.find(term))
+            (folded.count(term), -len(term), folded.find(term), len(term))
             for term in terms
-            if term in folded
+            if term in folded and len(term) <= limit
         ]
         if candidates:
-            _count, _negative_length, position = min(candidates)
+            _count, _negative_length, position, match_length = min(candidates)
     if position < 0:
         return content[:limit]
-    start = max(0, position - limit // 4)
-    end = min(len(content), start + limit)
-    if end - start < limit:
-        start = max(0, end - limit)
-    snippet = content[start:end]
-    if start:
-        snippet = "…" + snippet
-    if end < len(content):
-        snippet += "…"
-    return snippet
+
+    # Reserve both possible ellipses before choosing context. This keeps the
+    # matched interval in the result without a second prefix-only truncation.
+    match_length = min(match_length, limit)
+    possible_decorations = int(position > 0) + int(
+        position + match_length < len(content)
+    )
+    decorations = min(possible_decorations, max(0, limit - match_length))
+    use_prefix = position > 0 and decorations > 0
+    use_suffix = (
+        position + match_length < len(content)
+        and decorations > int(use_prefix)
+    )
+    available = limit - int(use_prefix) - int(use_suffix)
+    left = min(position, max(0, (available - match_length) // 4))
+    start = position - left
+    end = min(len(content), start + available)
+    if end - start < available:
+        start = max(0, end - available)
+    prefix = "…" if start and use_prefix else ""
+    suffix = "…" if end < len(content) and use_suffix else ""
+    return prefix + content[start:end] + suffix
+
+
+def _lexical_match_length(content: str, query: str) -> int:
+    """Longest literal query/term match, or zero for semantic-only results."""
+    folded = content.casefold()
+    query_folded = (query or "").strip().casefold()
+    lengths = [len(query_folded)] if query_folded and query_folded in folded else []
+    lengths.extend(
+        len(term)
+        for term in {term.casefold() for term in _SEARCH_TERM_RE.findall(query or "")}
+        if term in folded
+    )
+    return max(lengths, default=0)
 
 
 class SessionContextMixin:
@@ -346,6 +382,17 @@ class SessionContextMixin:
             )
         if not messages:
             return ""
+        # Preserve SDK rank within each class, but lexical hits always precede
+        # semantic-only results so a broad hit cannot consume the whole budget.
+        messages = sorted(
+            messages,
+            key=lambda message: int(
+                _lexical_match_length(
+                    (getattr(message, "content", "") or ""), q
+                )
+                == 0
+            ),
+        )
         # Author labels distinguish user-stated facts from assistant-derived ones.
         lines: list[str] = []
         for m in messages:
@@ -355,17 +402,29 @@ class SessionContextMixin:
             author = getattr(m, "peer_id", "") or "unknown"
             who = "assistant" if author == session.assistant_peer_id else author
             sess = getattr(m, "session_id", "") or ""
-            entry = f"[{who}{f' · {sess}' if sess else ''}] {_relevant_search_snippet(content, q, limit=1200)}"
             # Budget left after the joined snippets so far plus the separator this entry would need.
             remaining = char_budget - len("\n\n".join(lines)) - (2 if lines else 0)
             if remaining <= 0:
                 break
-            truncated = len(entry) > remaining
-            entry = entry[:remaining].rstrip()
+            label = f"[{who}{f' · {sess}' if sess else ''}] "
+            match_length = _lexical_match_length(content, q)
+            if match_length and len(label) + match_length > remaining:
+                short_label = f"[{who}] "
+                label = (
+                    short_label
+                    if len(short_label) + match_length <= remaining
+                    else ""
+                )
+            elif len(label) >= remaining:
+                label = ""
+            snippet = _relevant_search_snippet(
+                content, q, limit=remaining - len(label)
+            )
+            entry = (label + snippet).rstrip()
             if not entry:
                 break
             lines.append(entry)
-            if truncated:
+            if len(entry) >= remaining:
                 break
         return "\n\n".join(lines)
 
@@ -385,6 +444,10 @@ class SessionContextMixin:
         """Write a conclusion (durable fact) about ``peer`` back to Honcho."""
         if not content or not content.strip():
             return False
+        payload_content = content.strip()
+        if not is_safe_semantic_payload({"content": payload_content}):
+            logger.warning("Honcho conclusion rejected before semantic storage")
+            return False
         session = self._cache.get(session_key)
         if not session:
             logger.warning(
@@ -402,19 +465,19 @@ class SessionContextMixin:
                 )
                 return False
             payload = [
-                {"content": content.strip(), "session_id": session.honcho_session_id}
+                {"content": payload_content, "session_id": session.honcho_session_id}
             ]
-            self._authed_call(
+            self._authed_semantic_write(
                 "conclusion create",
+                payload,
                 lambda: self._conclusions_scope(session, target_peer_id).create(
                     payload
                 ),
             )
             logger.info(
-                "Created conclusion about %s for %s: %s",
+                "Created conclusion about %s for %s",
                 target_peer_id,
                 session_key,
-                content[:80],
             )
             return True
 
@@ -482,6 +545,9 @@ class SessionContextMixin:
         self, session_key: str, card: list[str], peer: str = "user"
     ) -> list[str] | None:
         """Replace a peer's card. Returns the updated card, or None on failure."""
+        if not is_safe_semantic_payload({"card": card}):
+            logger.warning("Honcho peer card rejected before semantic storage")
+            return None
 
         def _update(session: Any) -> list[str] | None:
             observer_peer_id, target_peer_id = self._resolve_observer_target(
@@ -494,8 +560,10 @@ class SessionContextMixin:
                     session_key,
                 )
                 return None
-            result = self._authed_call(
+            payload = {"card": card, "target": target_peer_id}
+            result = self._authed_semantic_write(
                 "peer card update",
+                payload,
                 lambda: self._get_or_create_peer(observer_peer_id).set_card(
                     card, **self._target_kwargs(target_peer_id)
                 ),
@@ -520,6 +588,9 @@ class SessionContextMixin:
         operations, auth failures are logged and swallowed here too."""
         if not content or not content.strip():
             return False
+        if not is_safe_semantic_payload({"content": content, "source": source}):
+            logger.warning("Skipping AI identity seed: semantic payload rejected")
+            return False
         session = self._cache.get(session_key)
         if not session:
             logger.warning("No session cached for '%s', skipping AI seed", session_key)
@@ -530,13 +601,16 @@ class SessionContextMixin:
             )
             return False
         wrapped = f"<ai_identity_seed>\n<source>{source}</source>\n\n{content.strip()}\n</ai_identity_seed>"
+        semantic_payload = {"content": wrapped, "source": source}
 
         def _seed() -> bool:
+            # The auth retry reruns this closure after rebuilding the SDK client,
+            # so validation, peer lookup, and message construction are all fresh.
+            require_safe_semantic_payload(semantic_payload)
             assistant_peer = self._get_or_create_peer(session.assistant_peer_id)
-            self._sdk_session(session.honcho_session_id).add_messages([
-                assistant_peer.message(wrapped)
-            ])
-            logger.info("Seeded AI identity from '%s' into %s", source, session_key)
+            message = assistant_peer.message(wrapped)
+            self._sdk_session(session.honcho_session_id).add_messages([message])
+            logger.info("Seeded AI identity into %s", session_key)
             return True
 
         try:

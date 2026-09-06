@@ -11,7 +11,7 @@ metadata:
     homepage: https://docs.honcho.dev
     related_skills: [hermes-agent]
 prerequisites:
-  pip: [honcho-ai]
+  pip: [honcho-ai==2.4.0]
 ---
 
 # Honcho Memory for Hermes

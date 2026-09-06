@@ -24,6 +24,11 @@ from plugins.memory.honcho.session_auth import (
 from plugins.memory.honcho.session_context import SessionContextMixin
 from plugins.memory.honcho.session_migration import SessionMigrationMixin
 from plugins.memory.honcho.session_peers import SessionPeersMixin
+from plugins.memory.honcho.semantic_safety import (
+    SemanticPayloadRejected,
+    is_safe_semantic_payload,
+    require_safe_semantic_payload,
+)
 
 if TYPE_CHECKING:
     from honcho import Honcho
@@ -246,6 +251,14 @@ class HonchoSessionManager(
 ):
     """Conversation sessions backed by Honcho, alongside hermes' SQLite state and file memory.
     Auth retry, peer-ID resolution, recall and memory-file migration live in the mixins."""
+
+    def _authed_semantic_write(self, label: str, payload: Any, fn: Any) -> Any:
+        """Validate exact payload before every authenticated write attempt."""
+        def _validated_attempt() -> Any:
+            require_safe_semantic_payload(payload)
+            return fn()
+
+        return self._authed_call(label, _validated_attempt)
 
     def __init__(
         self,
@@ -704,6 +717,27 @@ class HonchoSessionManager(
                     chunk_count=1,
                 )
 
+        # Validate exact content + metadata together before SDK message construction.
+        semantic_payload = [
+            {"content": message.get("content"), "metadata": message.get("metadata")}
+            for message in new_messages
+        ]
+        if not is_safe_semantic_payload(semantic_payload):
+            for message in new_messages:
+                message["_synced"] = False
+            logger.warning(
+                "Honcho semantic payload rejected before direct delivery count=%d",
+                len(new_messages),
+            )
+            return self._retain_delivery_outcome(
+                DeliveryOutcome(
+                    state=DeliveryState.FAILED,
+                    attempted_count=len(new_messages),
+                    pending_count=len(new_messages),
+                    error_category="semantic_payload_rejected",
+                )
+            )
+
         # Resolved inside the operation so a retry after a client rebuild gets fresh objects.
         def _sync_messages() -> int:
             user_peer = self._get_or_create_peer(session.user_peer_id)
@@ -725,7 +759,9 @@ class HonchoSessionManager(
             return len(honcho_messages)
 
         try:
-            synced = self._authed_call("message sync", _sync_messages)
+            synced = self._authed_semantic_write(
+                "message sync", semantic_payload, _sync_messages
+            )
             for msg in new_messages:
                 msg["_synced"] = True
             pending = sum(

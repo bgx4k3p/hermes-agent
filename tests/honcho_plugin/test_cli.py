@@ -273,6 +273,22 @@ class TestCloneHonchoForProfile:
         new_block = written["cfg"]["hosts"]["hermes_coder"]
         assert new_block["runtimePeerPrefix"] == "telegram_"
 
+    def test_message_metadata_exact_object_carries_into_cloned_profile(self, monkeypatch, tmp_path):
+        metadata = {
+            "schema": "agador.provenance/v1",
+            "extensions": {"agador": {"bounded": [1, "two", False, None]}},
+        }
+        cfg = {
+            "apiKey": "***",
+            "hosts": {"hermes": {"peerName": "eri", "messageMetadata": metadata}},
+        }
+        honcho_cli, written = self._setup_clone_env(monkeypatch, tmp_path, cfg)
+
+        assert honcho_cli.clone_honcho_for_profile("coder") is True
+        cloned = written["cfg"]["hosts"]["hermes_coder"]["messageMetadata"]
+        assert cloned == metadata
+        assert cloned is not metadata
+
     def test_legacy_pin_peer_name_migrates_to_canonical_on_clone(self, monkeypatch, tmp_path):
         cfg = {
             "apiKey": "***",
