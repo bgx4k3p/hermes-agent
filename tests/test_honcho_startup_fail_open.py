@@ -38,13 +38,13 @@ def _configured_hybrid_config() -> _FakeHonchoConfig:
     )
 
 
-def _configured_tools_config(*, init_on_session_start: bool = False) -> _FakeHonchoConfig:
+def _configured_tools_config(
+    *, init_on_session_start: bool = False
+) -> _FakeHonchoConfig:
     cfg = _configured_hybrid_config()
     cfg.recall_mode = "tools"
     cfg.init_on_session_start = init_on_session_start
     return cfg
-
-
 
 
 def test_stalled_init_only_delays_first_turn_prefetch(monkeypatch):
@@ -108,8 +108,6 @@ def test_honcho_background_init_rechecks_state_after_lock_race():
     assert provider._session_initialized is True
 
 
-
-
 def test_first_turn_base_wait_is_shared_by_init_and_context_fetch():
     """Session init and base retrieval share one configured turn-1 deadline."""
     provider = HonchoMemoryProvider()
@@ -158,9 +156,6 @@ def test_first_turn_base_wait_is_shared_by_init_and_context_fetch():
         provider._init_thread.join(timeout=10)
 
 
-
-
-
 def test_honcho_sync_turn_waits_for_full_background_startup(monkeypatch):
     """Manager assignment alone is not readiness while background init continues."""
     provider = HonchoMemoryProvider()
@@ -193,8 +188,12 @@ def test_honcho_sync_turn_waits_for_full_background_startup(monkeypatch):
         "plugins.memory.honcho.client.HonchoClientConfig.from_global_config",
         lambda: cfg,
     )
-    monkeypatch.setattr("plugins.memory.honcho.client.get_honcho_client", lambda cfg: object())
-    monkeypatch.setattr("plugins.memory.honcho.session.HonchoSessionManager", StartupManager)
+    monkeypatch.setattr(
+        "plugins.memory.honcho.client.get_honcho_client", lambda cfg: object()
+    )
+    monkeypatch.setattr(
+        "plugins.memory.honcho.session.HonchoSessionManager", StartupManager
+    )
 
     provider.initialize("session-1", platform="cli")
     try:
@@ -245,8 +244,6 @@ def test_honcho_system_prompt_advertises_active_while_background_init_runs(monke
         init_thread = getattr(provider, "_init_thread", None)
         if init_thread:
             init_thread.join(timeout=1)
-
-
 
 
 def test_honcho_tools_eager_init_failure_does_not_leave_ready_manager(monkeypatch):
@@ -365,7 +362,7 @@ def test_honcho_sync_turn_skips_anchored_gateway_notifications():
         "[PRIOR CONTEXT — for reference only; not a new message]",
         "[Your active task list was preserved across context compression]",
         "[CONTEXT SUMMARY]: previous context",
-        "[IMPORTANT: Background process 12 matched watch pattern \"foo\"\nCommand: x",
+        '[IMPORTANT: Background process 12 matched watch pattern "foo"\nCommand: x',
     )
 
     for wrapper in wrappers:
@@ -384,7 +381,9 @@ def test_honcho_sync_turn_skips_anchored_gateway_notifications():
 
         provider.sync_turn(wrapper, "assistant reply")
 
-        assert provider._sync_thread is None, f"wrapper not suppressed: {wrapper[:60]!r}"
+        assert provider._sync_thread is None, (
+            f"wrapper not suppressed: {wrapper[:60]!r}"
+        )
         assert manager_calls == [], f"wrapper not suppressed: {wrapper[:60]!r}"
 
 
@@ -411,7 +410,9 @@ def test_honcho_sync_turn_skips_prose_gateway_notifications():
 
         provider.sync_turn(wrapper, "assistant reply")
 
-        assert provider._sync_thread is None, f"prose wrapper not suppressed: {wrapper[:60]!r}"
+        assert provider._sync_thread is None, (
+            f"prose wrapper not suppressed: {wrapper[:60]!r}"
+        )
         assert manager_calls == [], f"prose wrapper not suppressed: {wrapper[:60]!r}"
 
 
@@ -444,7 +445,9 @@ def test_honcho_sync_turn_does_not_suppress_genuine_user_messages():
 
         provider.sync_turn(msg, "assistant reply")
 
-        assert provider._sync_thread is not None, f"genuine message suppressed: {msg[:60]!r}"
+        assert provider._sync_thread is not None, (
+            f"genuine message suppressed: {msg[:60]!r}"
+        )
         assert manager_calls != [], f"genuine message suppressed: {msg[:60]!r}"
 
 

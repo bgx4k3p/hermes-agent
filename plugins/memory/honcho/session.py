@@ -16,7 +16,11 @@ from enum import Enum
 from typing import Any, TYPE_CHECKING
 
 from plugins.memory.honcho.client import get_honcho_client, spawn_context_thread
-from plugins.memory.honcho.session_auth import HonchoAuthError, SessionAuthMixin, _is_auth_error
+from plugins.memory.honcho.session_auth import (
+    HonchoAuthError,
+    SessionAuthMixin,
+    _is_auth_error,
+)
 from plugins.memory.honcho.session_context import SessionContextMixin
 from plugins.memory.honcho.session_migration import SessionMigrationMixin
 from plugins.memory.honcho.session_peers import SessionPeersMixin
@@ -36,6 +40,7 @@ class DeliveryState(str, Enum):
     NOOP = "noop"
     DELIVERED = "delivered"
     FAILED = "failed"
+
 
 @dataclass(frozen=True)
 class DeliveryOutcome:
@@ -72,6 +77,7 @@ class DeliveryOutcome:
             error_category=latest_failure.error_category if latest_failure else None,
             http_status=latest_failure.http_status if latest_failure else None,
         )
+
 
 def classify_delivery_error(exc: BaseException) -> tuple[str, int | None]:
     """Classify a delivery error without retaining or rendering its text."""
@@ -128,7 +134,15 @@ _SECRET_SHAPED_RE = re.compile(
     r"\b(?:api[_-]?key|token|password|secret)\s*[:=]|\b(?:sk-|ghp_|github_pat_)[A-Za-z0-9_-]{12,})"
 )
 _SAFE_CREDENTIAL_REFERENCE_SUFFIXES = (
-    "_path", "_ref", "_reference", "_name", "_id", "_status", "_count", "_policy", "_enabled",
+    "_path",
+    "_ref",
+    "_reference",
+    "_name",
+    "_id",
+    "_status",
+    "_count",
+    "_policy",
+    "_enabled",
 )
 
 
@@ -144,15 +158,29 @@ def _is_sensitive_metadata_key(key: str) -> bool:
         return False
     parts = normalized.split("_")
     compact = "".join(parts)
-    if any(part in {"password", "passwd", "secret", "token", "authorization"} for part in parts):
+    if any(
+        part in {"password", "passwd", "secret", "token", "authorization"}
+        for part in parts
+    ):
         return True
-    if any(marker in compact for marker in (
-        "apikey", "privatekey", "clientsecret", "accesstoken", "refreshtoken",
-        "authtoken", "password", "authorization",
-    )):
+    if any(
+        marker in compact
+        for marker in (
+            "apikey",
+            "privatekey",
+            "clientsecret",
+            "accesstoken",
+            "refreshtoken",
+            "authtoken",
+            "password",
+            "authorization",
+        )
+    ):
         return True
-    return any(parts[index:index + 2] in (["api", "key"], ["private", "key"])
-               for index in range(max(0, len(parts) - 1)))
+    return any(
+        parts[index : index + 2] in (["api", "key"], ["private", "key"])
+        for index in range(max(0, len(parts) - 1))
+    )
 
 
 def _redact_metadata_value(value: Any) -> Any:
@@ -162,7 +190,11 @@ def _redact_metadata_value(value: Any) -> Any:
         for key, item in value.items():
             raw_key = str(key)
             safe_key = str(_redact_metadata_value(raw_key))
-            result[safe_key] = "«redacted-metadata»" if _is_sensitive_metadata_key(raw_key) else _redact_metadata_value(item)
+            result[safe_key] = (
+                "«redacted-metadata»"
+                if _is_sensitive_metadata_key(raw_key)
+                else _redact_metadata_value(item)
+            )
         return result
     if isinstance(value, (list, tuple)):
         return [_redact_metadata_value(item) for item in value]
@@ -172,10 +204,15 @@ def _redact_metadata_value(value: Any) -> Any:
         return "«redacted-metadata»"
     try:
         from agent.redact import redact_sensitive_text
+
         redacted = redact_sensitive_text(value, force=True, redact_url_credentials=True)
     except Exception:
         return "«redacted-metadata»"
-    return "«redacted-metadata»" if redacted == value and _SECRET_SHAPED_RE.search(value) else redacted
+    return (
+        "«redacted-metadata»"
+        if redacted == value and _SECRET_SHAPED_RE.search(value)
+        else redacted
+    )
 
 
 @dataclass
@@ -194,19 +231,31 @@ class HonchoSession:
     def add_message(self, role: str, content: str, **kwargs: Any) -> None:
         """Add a message to the local cache."""
         created_at = kwargs.pop("created_at", None) or _utc_now()
-        self.messages.append({"role": role, "content": content, "timestamp": _rfc3339(created_at),
-                              "created_at": created_at, **kwargs})
+        self.messages.append({
+            "role": role,
+            "content": content,
+            "timestamp": _rfc3339(created_at),
+            "created_at": created_at,
+            **kwargs,
+        })
         self.updated_at = _utc_now()
 
 
-class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMixin, SessionMigrationMixin):
+class HonchoSessionManager(
+    SessionAuthMixin, SessionPeersMixin, SessionContextMixin, SessionMigrationMixin
+):
     """Conversation sessions backed by Honcho, alongside hermes' SQLite state and file memory.
     Auth retry, peer-ID resolution, recall and memory-file migration live in the mixins."""
 
     def __init__(
-        self, honcho: Honcho | None = None, context_tokens: int | None = None, config: Any | None = None,
-        runtime_user_peer_name: str | None = None, runtime_user_peer_name_alt: str | None = None,
-        provenance_context: dict[str, Any] | None = None, source_session_id: str | None = None,
+        self,
+        honcho: Honcho | None = None,
+        context_tokens: int | None = None,
+        config: Any | None = None,
+        runtime_user_peer_name: str | None = None,
+        runtime_user_peer_name_alt: str | None = None,
+        provenance_context: dict[str, Any] | None = None,
+        source_session_id: str | None = None,
     ):
         """``honcho`` defaults to the per-identity cached client; ``context_tokens`` caps
         context() calls (None = Honcho default); the runtime peer names are the gateway
@@ -219,7 +268,11 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         self._provenance_context = dict(provenance_context or {})
         self._source_session_id = str(source_session_id or "").strip()
         configured_metadata = getattr(config, "message_metadata", {}) if config else {}
-        self._message_metadata = copy.deepcopy(configured_metadata) if isinstance(configured_metadata, dict) else {}
+        self._message_metadata = (
+            copy.deepcopy(configured_metadata)
+            if isinstance(configured_metadata, dict)
+            else {}
+        )
         self._cache: dict[str, HonchoSession] = {}
         self._cache_lock = threading.RLock()
         self._delivery_lock = threading.RLock()
@@ -236,10 +289,15 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         # Behavior knobs copied from config (HonchoClientConfig defaults when absent); the
         # observation booleans map 1:1 to Honcho's SessionPeerConfig toggles.
         for name, default in (
-            ("write_frequency", "async"), ("dialectic_reasoning_level", "low"), ("dialectic_dynamic", True),
-            ("dialectic_max_chars", 600), ("dialectic_max_input_chars", 10000),
-            ("user_observe_me", True), ("user_observe_others", True),
-            ("ai_observe_me", True), ("ai_observe_others", True),
+            ("write_frequency", "async"),
+            ("dialectic_reasoning_level", "low"),
+            ("dialectic_dynamic", True),
+            ("dialectic_max_chars", 600),
+            ("dialectic_max_input_chars", 10000),
+            ("user_observe_me", True),
+            ("user_observe_others", True),
+            ("ai_observe_me", True),
+            ("ai_observe_others", True),
         ):
             setattr(self, f"_{name}", getattr(config, name) if config else default)
         self._turn_counter: int = 0
@@ -254,7 +312,9 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         # Async write queue — the writer thread starts lazily on first enqueue
         # (_ensure_async_writer): constructing a manager must not spawn background
         # work or touch the network (unit tests build managers with mocked clients).
-        self._async_queue: queue.Queue | None = queue.Queue() if self._write_frequency == "async" else None
+        self._async_queue: queue.Queue | None = (
+            queue.Queue() if self._write_frequency == "async" else None
+        )
         self._async_thread: threading.Thread | None = None
         self._async_thread_lock = threading.Lock()
 
@@ -262,6 +322,7 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
     def last_delivery_outcome(self) -> DeliveryOutcome:
         """Latest content-free direct delivery result, including async failures."""
         return self._last_delivery_outcome
+
     def _retain_delivery_outcome(self, outcome: DeliveryOutcome) -> DeliveryOutcome:
         self._last_delivery_outcome = outcome
         return outcome
@@ -270,67 +331,119 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
     def new_source_record_id() -> str:
         return str(uuid.uuid4())
 
-    def _build_message_metadata(self, session: HonchoSession, role: str, *, created_at: datetime,
-                                source_record_id: str, source_session_id: str | None,
-                                chunk_index: int, chunk_count: int,
-                                secret_rejected: bool = False) -> dict[str, Any]:
+    def _build_message_metadata(
+        self,
+        session: HonchoSession,
+        role: str,
+        *,
+        created_at: datetime,
+        source_record_id: str,
+        source_session_id: str | None,
+        chunk_index: int,
+        chunk_count: int,
+        secret_rejected: bool = False,
+    ) -> dict[str, Any]:
         context = self._provenance_context
         extensions = copy.deepcopy(self._message_metadata.get("extensions", {}))
         if not isinstance(extensions, dict):
             extensions = {}
         static_hermes = extensions.get("hermes")
-        hermes_extension = dict(static_hermes) if isinstance(static_hermes, dict) else {}
+        hermes_extension = (
+            dict(static_hermes) if isinstance(static_hermes, dict) else {}
+        )
         hermes_extension.update({
             "platform": str(context.get("platform") or "cli"),
             "agent_context": str(context.get("agent_context") or "primary"),
             "agent_identity": str(context.get("agent_identity") or "default"),
             "agent_workspace": str(context.get("agent_workspace") or "hermes"),
-            "user_id": context.get("user_id"), "user_id_alt": context.get("user_id_alt"),
-            "user_name": context.get("user_name"), "chat_id": context.get("chat_id"),
-            "chat_name": context.get("chat_name"), "chat_type": context.get("chat_type"),
-            "thread_id": context.get("thread_id"), "gateway_session_key": context.get("gateway_session_key"),
-            "session_title": context.get("session_title"), "honcho_session_id": session.honcho_session_id,
-            "chunk_index": chunk_index, "chunk_count": chunk_count,
+            "user_id": context.get("user_id"),
+            "user_id_alt": context.get("user_id_alt"),
+            "user_name": context.get("user_name"),
+            "chat_id": context.get("chat_id"),
+            "chat_name": context.get("chat_name"),
+            "chat_type": context.get("chat_type"),
+            "thread_id": context.get("thread_id"),
+            "gateway_session_key": context.get("gateway_session_key"),
+            "session_title": context.get("session_title"),
+            "honcho_session_id": session.honcho_session_id,
+            "chunk_index": chunk_index,
+            "chunk_count": chunk_count,
         })
         extensions["hermes"] = hermes_extension
         metadata = copy.deepcopy(self._message_metadata)
         profile = str(context.get("agent_identity") or "default")
         agent_context = str(context.get("agent_context") or "primary")
         metadata.update({
-            "schema": metadata.get("schema") or "hermes.provenance/v1", "event_id": str(uuid.uuid4()),
+            "schema": metadata.get("schema") or "hermes.provenance/v1",
+            "event_id": str(uuid.uuid4()),
             "record_kind": "source_event",
-            "source_kind": "user_statement" if role == "user" else "assistant_statement",
-            "human_peer": session.user_peer_id, "ai_peer": session.assistant_peer_id,
-            "interface": str(context.get("platform") or "cli"), "machine": _resolve_machine_identity(context),
+            "source_kind": "user_statement"
+            if role == "user"
+            else "assistant_statement",
+            "human_peer": session.user_peer_id,
+            "ai_peer": session.assistant_peer_id,
+            "interface": str(context.get("platform") or "cli"),
+            "machine": _resolve_machine_identity(context),
             "runtime": f"hermes:{profile}:{agent_context}",
-            "session_id": str(source_session_id or self._source_session_id or session.key),
-            "channel_id": context.get("chat_id"), "source_record_id": source_record_id,
-            "observed_at": _rfc3339(created_at), "effective_at": metadata.get("effective_at"),
-            "authority": session.user_peer_id if role == "user" else session.assistant_peer_id,
-            "evidence_refs": metadata.get("evidence_refs") if isinstance(metadata.get("evidence_refs"), list) else [],
+            "session_id": str(
+                source_session_id or self._source_session_id or session.key
+            ),
+            "channel_id": context.get("chat_id"),
+            "source_record_id": source_record_id,
+            "observed_at": _rfc3339(created_at),
+            "effective_at": metadata.get("effective_at"),
+            "authority": session.user_peer_id
+            if role == "user"
+            else session.assistant_peer_id,
+            "evidence_refs": metadata.get("evidence_refs")
+            if isinstance(metadata.get("evidence_refs"), list)
+            else [],
             "confidence": metadata.get("confidence"),
             "verification_state": metadata.get("verification_state") or "unverified",
             "review_state": metadata.get("review_state") or "captured",
-            "sensitivity": "secret_rejected" if secret_rejected else metadata.get("sensitivity") or "private",
+            "sensitivity": "secret_rejected"
+            if secret_rejected
+            else metadata.get("sensitivity") or "private",
             "retention_class": metadata.get("retention_class") or "semantic",
-            "derived_from": metadata.get("derived_from") if isinstance(metadata.get("derived_from"), list) else [],
-            "supersedes": metadata.get("supersedes") if isinstance(metadata.get("supersedes"), list) else [],
-            "superseded_by": metadata.get("superseded_by") if isinstance(metadata.get("superseded_by"), list) else [],
-            "deletion_request_id": metadata.get("deletion_request_id"), "deleted_at": metadata.get("deleted_at"),
-            "target_artifacts": metadata.get("target_artifacts") if isinstance(metadata.get("target_artifacts"), list) else [],
+            "derived_from": metadata.get("derived_from")
+            if isinstance(metadata.get("derived_from"), list)
+            else [],
+            "supersedes": metadata.get("supersedes")
+            if isinstance(metadata.get("supersedes"), list)
+            else [],
+            "superseded_by": metadata.get("superseded_by")
+            if isinstance(metadata.get("superseded_by"), list)
+            else [],
+            "deletion_request_id": metadata.get("deletion_request_id"),
+            "deleted_at": metadata.get("deleted_at"),
+            "target_artifacts": metadata.get("target_artifacts")
+            if isinstance(metadata.get("target_artifacts"), list)
+            else [],
             "extensions": extensions,
         })
         return _redact_metadata_value(metadata)
 
-    def add_source_message(self, session: HonchoSession, role: str, content: str, *,
-                           source_record_id: str | None = None, source_session_id: str | None = None,
-                           chunk_index: int = 0, chunk_count: int = 1,
-                           secret_rejected: bool = False) -> None:
+    def add_source_message(
+        self,
+        session: HonchoSession,
+        role: str,
+        content: str,
+        *,
+        source_record_id: str | None = None,
+        source_session_id: str | None = None,
+        chunk_index: int = 0,
+        chunk_count: int = 1,
+        secret_rejected: bool = False,
+    ) -> None:
         created_at = _utc_now()
         metadata = self._build_message_metadata(
-            session, role, created_at=created_at,
+            session,
+            role,
+            created_at=created_at,
             source_record_id=source_record_id or self.new_source_record_id(),
-            source_session_id=source_session_id, chunk_index=chunk_index, chunk_count=chunk_count,
+            source_session_id=source_session_id,
+            chunk_index=chunk_index,
+            chunk_count=chunk_count,
             secret_rejected=secret_rejected,
         )
         session.add_message(role, content, metadata=metadata, created_at=created_at)
@@ -364,16 +477,23 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
 
     def _sdk_session(self, session_id: str) -> Any:
         """Get or create the SDK session (cached until a client rebuild clears the cache)."""
-        return self._cached_sdk_object(self._sessions_cache, session_id, lambda: self.honcho.session(session_id))
+        return self._cached_sdk_object(
+            self._sessions_cache, session_id, lambda: self.honcho.session(session_id)
+        )
 
     def _get_or_create_peer(self, peer_id: str) -> Any:
         """Get or create a Honcho peer (one get-or-create API call, then cached)."""
         return self._cached_sdk_object(
-            self._peers_cache, peer_id, lambda: self._authed_call("peer setup", lambda: self.honcho.peer(peer_id)))
+            self._peers_cache,
+            peer_id,
+            lambda: self._authed_call("peer setup", lambda: self.honcho.peer(peer_id)),
+        )
 
     # ----- Session creation -----
 
-    def _configure_session_peers(self, session_id: str, user_peer: Any, assistant_peer: Any) -> bool:
+    def _configure_session_peers(
+        self, session_id: str, user_peer: Any, assistant_peer: Any
+    ) -> bool:
         """add_peers with the local observation config, then adopt the server's effective
         config (set via the Honcho UI, it wins over local defaults). Observation booleans are
         manager-scoped, so the last session init wins. Returns False when auth died mid-way
@@ -381,32 +501,55 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         peers = (("user", user_peer), ("ai", assistant_peer))
         try:
             from honcho.session import SessionPeerConfig
+
             peer_entries = [
-                (peer, SessionPeerConfig(observe_me=getattr(self, f"_{kind}_observe_me"),
-                                         observe_others=getattr(self, f"_{kind}_observe_others")))
+                (
+                    peer,
+                    SessionPeerConfig(
+                        observe_me=getattr(self, f"_{kind}_observe_me"),
+                        observe_others=getattr(self, f"_{kind}_observe_others"),
+                    ),
+                )
                 for kind, peer in peers
             ]
-            self._authed_call("session peer setup", lambda: self._sdk_session(session_id).add_peers(peer_entries))
+            self._authed_call(
+                "session peer setup",
+                lambda: self._sdk_session(session_id).add_peers(peer_entries),
+            )
 
             def _adopt_server_config() -> None:
                 server_cfgs = self._authed_call(
                     "peer configuration read",
-                    lambda: [self._sdk_session(session_id).get_peer_configuration(peer) for _, peer in peers],
+                    lambda: [
+                        self._sdk_session(session_id).get_peer_configuration(peer)
+                        for _, peer in peers
+                    ],
                 )
                 for (kind, _), server_cfg in zip(peers, server_cfgs):
                     for field_name in ("observe_me", "observe_others"):
                         value = getattr(server_cfg, field_name)
                         if value is not None:
                             setattr(self, f"_{kind}_{field_name}", value)
-                logger.debug("Honcho observation synced from server: user(me=%s,others=%s) ai(me=%s,others=%s)",
-                             self._user_observe_me, self._user_observe_others, self._ai_observe_me, self._ai_observe_others)
+                logger.debug(
+                    "Honcho observation synced from server: user(me=%s,others=%s) ai(me=%s,others=%s)",
+                    self._user_observe_me,
+                    self._user_observe_others,
+                    self._ai_observe_me,
+                    self._ai_observe_others,
+                )
 
-            self._guarded(_adopt_server_config, None, logging.DEBUG,
-                          "Honcho get_peer_configuration failed (using local config): %s")
+            self._guarded(
+                _adopt_server_config,
+                None,
+                logging.DEBUG,
+                "Honcho get_peer_configuration failed (using local config): %s",
+            )
         except HonchoAuthError:
             return False
         except Exception as e:
-            logger.warning("Honcho session '%s' add_peers failed (non-fatal): %s", session_id, e)
+            logger.warning(
+                "Honcho session '%s' add_peers failed (non-fatal): %s", session_id, e
+            )
         return True
 
     def _load_existing_messages(self, session_id: str) -> list:
@@ -414,25 +557,46 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         try:
             ctx = self._authed_call(
                 "session context load",
-                lambda: self._sdk_session(session_id).context(summary=True, tokens=self._context_tokens))
+                lambda: self._sdk_session(session_id).context(
+                    summary=True, tokens=self._context_tokens
+                ),
+            )
             existing_messages = ctx.messages or []
             if len(existing_messages) > 1:
                 timestamps = [m.created_at for m in existing_messages if m.created_at]
                 if timestamps and timestamps != sorted(timestamps):
-                    logger.warning("Honcho messages not chronologically ordered for session '%s', sorting", session_id)
-                    existing_messages = sorted(existing_messages, key=lambda m: m.created_at or datetime.min)
+                    logger.warning(
+                        "Honcho messages not chronologically ordered for session '%s', sorting",
+                        session_id,
+                    )
+                    existing_messages = sorted(
+                        existing_messages, key=lambda m: m.created_at or datetime.min
+                    )
             if existing_messages:
-                logger.info("Honcho session '%s' retrieved (%d existing messages)", session_id, len(existing_messages))
+                logger.info(
+                    "Honcho session '%s' retrieved (%d existing messages)",
+                    session_id,
+                    len(existing_messages),
+                )
             else:
                 logger.info("Honcho session '%s' created (new)", session_id)
             return existing_messages
         except HonchoAuthError:
-            logger.warning("Honcho session '%s' loaded without server context: auth failed", session_id)
+            logger.warning(
+                "Honcho session '%s' loaded without server context: auth failed",
+                session_id,
+            )
         except Exception as e:
-            logger.warning("Honcho session '%s' loaded (failed to fetch context: %s)", session_id, e)
+            logger.warning(
+                "Honcho session '%s' loaded (failed to fetch context: %s)",
+                session_id,
+                e,
+            )
         return []
 
-    def _get_or_create_honcho_session(self, session_id: str, user_peer: Any, assistant_peer: Any) -> tuple[Any, list]:
+    def _get_or_create_honcho_session(
+        self, session_id: str, user_peer: Any, assistant_peer: Any
+    ) -> tuple[Any, list]:
         """(honcho_session, existing_messages) with peers configured; a cached session yields no messages."""
         with self._cache_lock:
             if session_id in self._sessions_cache:
@@ -440,14 +604,19 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
                 return self._sessions_cache[session_id], []
 
         self._authed_call("session setup", lambda: self._sdk_session(session_id))
-        existing_messages: list = (self._load_existing_messages(session_id)
-                                   if self._configure_session_peers(session_id, user_peer, assistant_peer) else [])
+        existing_messages: list = (
+            self._load_existing_messages(session_id)
+            if self._configure_session_peers(session_id, user_peer, assistant_peer)
+            else []
+        )
 
         with self._cache_lock:
             honcho_session = self._sessions_cache.get(session_id)
         if honcho_session is None:
             # A mid-init client rebuild dropped the cached session; resolve a fresh one.
-            honcho_session = self._authed_call("session setup", lambda: self._sdk_session(session_id))
+            honcho_session = self._authed_call(
+                "session setup", lambda: self._sdk_session(session_id)
+            )
         return honcho_session, existing_messages
 
     def get_or_create(self, key: str) -> HonchoSession:
@@ -462,20 +631,32 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         # identities to peerName for single-user deployments (see _resolve_user_peer_id).
         # Determine peer IDs — no lock needed (read-only, no shared state mutation). See #14984.
         user_peer_id = self._resolve_user_peer_id(key)
-        assistant_peer_id = self._sanitize_id(self._config.ai_peer if self._config else "hermes-assistant")
+        assistant_peer_id = self._sanitize_id(
+            self._config.ai_peer if self._config else "hermes-assistant"
+        )
 
         # All expensive I/O outside the lock — Honcho's persistence is source of truth.
         honcho_session_id = self._sanitize_id(key)
         user_peer = self._get_or_create_peer(user_peer_id)
         assistant_peer = self._get_or_create_peer(assistant_peer_id)
-        _, existing_messages = self._get_or_create_honcho_session(honcho_session_id, user_peer, assistant_peer)
+        _, existing_messages = self._get_or_create_honcho_session(
+            honcho_session_id, user_peer, assistant_peer
+        )
 
         session = HonchoSession(
-            key=key, user_peer_id=user_peer_id, assistant_peer_id=assistant_peer_id, honcho_session_id=honcho_session_id,
+            key=key,
+            user_peer_id=user_peer_id,
+            assistant_peer_id=assistant_peer_id,
+            honcho_session_id=honcho_session_id,
             messages=[
-                {"role": "assistant" if msg.peer_id == assistant_peer_id else "user", "content": msg.content,
-                 "timestamp": msg.created_at.isoformat() if msg.created_at else "", "created_at": msg.created_at,
-                 "metadata": copy.deepcopy(getattr(msg, "metadata", None) or {}), "_synced": True}
+                {
+                    "role": "assistant" if msg.peer_id == assistant_peer_id else "user",
+                    "content": msg.content,
+                    "timestamp": msg.created_at.isoformat() if msg.created_at else "",
+                    "created_at": msg.created_at,
+                    "metadata": copy.deepcopy(getattr(msg, "metadata", None) or {}),
+                    "_synced": True,
+                }
                 for msg in existing_messages
             ],
         )
@@ -489,6 +670,7 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         """The single structured boundary for direct Honcho message delivery."""
         with self._delivery_lock:
             return self._flush_session_locked(session)
+
     def _flush_session_locked(self, session: HonchoSession) -> DeliveryOutcome:
         """Deliver one session while holding the manager-wide delivery lock."""
         if not session.messages:
@@ -505,7 +687,9 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         # Backward-compatible guard for callers that populated the local cache
         # directly. Assign once before the first attempt so retries keep IDs.
         for message in new_messages:
-            if not isinstance(message.get("metadata"), dict) or not message["metadata"].get("event_id"):
+            if not isinstance(message.get("metadata"), dict) or not message[
+                "metadata"
+            ].get("event_id"):
                 created_at = message.get("created_at")
                 if not isinstance(created_at, datetime):
                     created_at = _utc_now()
@@ -625,7 +809,9 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
                         "Honcho async direct delivery terminal failure category=%s status=%s "
                         "attempted=%d pending=%d; messages remain retryable",
                         outcome.error_category,
-                        outcome.http_status if outcome.http_status is not None else "none",
+                        outcome.http_status
+                        if outcome.http_status is not None
+                        else "none",
                         outcome.attempted_count,
                         outcome.pending_count,
                     )
@@ -723,12 +909,18 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
             return
         with self._async_thread_lock:
             if self._async_thread is None or not self._async_thread.is_alive():
-                self._async_thread = spawn_context_thread(self._async_writer_loop, name="honcho-async-writer")
+                self._async_thread = spawn_context_thread(
+                    self._async_writer_loop, name="honcho-async-writer"
+                )
                 self._async_thread.start()
 
     def stop_async_writer(self) -> None:
         """Join the async writer WITHOUT flushing (saveMessages: false must still exit cleanly)."""
-        if self._async_queue is not None and self._async_thread is not None and self._async_thread.is_alive():
+        if (
+            self._async_queue is not None
+            and self._async_thread is not None
+            and self._async_thread.is_alive()
+        ):
             self._async_queue.put(_ASYNC_SHUTDOWN)
             self._async_thread.join(timeout=10)
 
@@ -740,8 +932,11 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
 
     # ----- Prefetch cache -----
 
-    def prefetch_context(self, session_key: str, user_message: str | None = None) -> None:
+    def prefetch_context(
+        self, session_key: str, user_message: str | None = None
+    ) -> None:
         """Fire get_prefetch_context in a background thread; consumed next turn via pop_context_result()."""
+
         def _run():
             result = self.get_prefetch_context(session_key, user_message)
             if result:

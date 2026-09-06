@@ -94,14 +94,19 @@ def _wire_flush(mgr, session, *, fail_first=False):
 
     def make(role):
         def factory(content, *, metadata, created_at):
-            msg = SimpleNamespace(content=content, metadata=metadata, created_at=created_at, role=role)
+            msg = SimpleNamespace(
+                content=content, metadata=metadata, created_at=created_at, role=role
+            )
             created.append(msg)
             return msg
+
         return factory
 
     user_peer.message.side_effect = make("user")
     assistant_peer.message.side_effect = make("assistant")
-    mgr._get_or_create_peer = MagicMock(side_effect=lambda peer: user_peer if peer == "stable-human" else assistant_peer)
+    mgr._get_or_create_peer = MagicMock(
+        side_effect=lambda peer: user_peer if peer == "stable-human" else assistant_peer
+    )
     sdk_session = MagicMock()
     if fail_first:
         sdk_session.add_messages.side_effect = [RuntimeError("synthetic outage"), None]
@@ -141,8 +146,13 @@ def test_exact_normative_metadata_and_sdk_created_at_for_both_roles():
         assert md["extensions"]["hermes"]["agent_workspace"] == "hermes"
         assert "hermes_home" not in md["extensions"]["hermes"]
         assert md["extensions"]["hermes"]["chat_type"] == "group"
-        assert md["extensions"]["hermes"]["gateway_session_key"] == INIT_CONTEXT["gateway_session_key"]
-        assert item.created_at == datetime.fromisoformat(md["observed_at"].replace("Z", "+00:00"))
+        assert (
+            md["extensions"]["hermes"]["gateway_session_key"]
+            == INIT_CONTEXT["gateway_session_key"]
+        )
+        assert item.created_at == datetime.fromisoformat(
+            md["observed_at"].replace("Z", "+00:00")
+        )
         assert item.created_at.tzinfo == timezone.utc
     assert user.metadata["source_kind"] == "user_statement"
     assert assistant.metadata["source_kind"] == "assistant_statement"
@@ -169,14 +179,35 @@ def test_chunked_role_side_has_one_source_record_and_unique_stable_events():
     mgr = _manager()
     session = _cached_session()
     source_record_id = mgr.new_source_record_id()
-    mgr.add_source_message(session, "user", "part 1", source_record_id=source_record_id, chunk_index=0, chunk_count=2)
-    mgr.add_source_message(session, "user", "part 2", source_record_id=source_record_id, chunk_index=1, chunk_count=2)
+    mgr.add_source_message(
+        session,
+        "user",
+        "part 1",
+        source_record_id=source_record_id,
+        chunk_index=0,
+        chunk_count=2,
+    )
+    mgr.add_source_message(
+        session,
+        "user",
+        "part 2",
+        source_record_id=source_record_id,
+        chunk_index=1,
+        chunk_count=2,
+    )
 
     first, second = (m["metadata"] for m in session.messages)
     assert first["source_record_id"] == second["source_record_id"] == source_record_id
     assert first["event_id"] != second["event_id"]
-    assert [first["extensions"]["hermes"]["chunk_index"], second["extensions"]["hermes"]["chunk_index"]] == [0, 1]
-    assert first["extensions"]["hermes"]["chunk_count"] == second["extensions"]["hermes"]["chunk_count"] == 2
+    assert [
+        first["extensions"]["hermes"]["chunk_index"],
+        second["extensions"]["hermes"]["chunk_index"],
+    ] == [0, 1]
+    assert (
+        first["extensions"]["hermes"]["chunk_count"]
+        == second["extensions"]["hermes"]["chunk_count"]
+        == 2
+    )
 
 
 def test_static_defaults_merge_but_dynamic_fields_are_protected():
@@ -194,7 +225,10 @@ def test_static_defaults_merge_but_dynamic_fields_are_protected():
         "observed_at": "2000-01-01T00:00:00Z",
         "human_peer": "wrong-human",
         "ai_peer": "wrong-ai",
-        "extensions": {"custom": {"kept": True}, "hermes": {"thread_id": "wrong-thread", "extra": "kept"}},
+        "extensions": {
+            "custom": {"kept": True},
+            "hermes": {"thread_id": "wrong-thread", "extra": "kept"},
+        },
     }
     mgr = _manager(static=static)
     session = _cached_session()
@@ -205,7 +239,10 @@ def test_static_defaults_merge_but_dynamic_fields_are_protected():
     assert md["record_kind"] == "source_event"
     assert md["source_kind"] == "assistant_statement"
     assert (md["interface"], md["machine"], md["runtime"], md["session_id"]) == (
-        "telegram", "runtime-node-7", "hermes:work:primary", "source-session-123"
+        "telegram",
+        "runtime-node-7",
+        "hermes:work:primary",
+        "source-session-123",
     )
     assert (md["human_peer"], md["ai_peer"]) == ("stable-human", "hermes-coding")
     assert md["channel_id"] == "chat-42"
@@ -234,9 +271,13 @@ def test_default_config_emits_coherent_provider_neutral_envelope():
     assert md["extensions"]["hermes"]["chunk_count"] == 1
 
 
-@pytest.mark.parametrize("strategy", ["per-session", "per-directory", "per-repo", "global"])
+@pytest.mark.parametrize(
+    "strategy", ["per-session", "per-directory", "per-repo", "global"]
+)
 def test_original_source_session_is_preserved_for_every_session_strategy(strategy):
-    cfg = HonchoClientConfig(session_strategy=strategy, message_metadata=AGADOR_DEFAULTS)
+    cfg = HonchoClientConfig(
+        session_strategy=strategy, message_metadata=AGADOR_DEFAULTS
+    )
     provider = HonchoMemoryProvider()
     provider._config = cfg
     provider._session_key = f"resolved-{strategy}"
@@ -253,7 +294,9 @@ def test_original_source_session_is_preserved_for_every_session_strategy(strateg
     # Avoid remote setup in this behavioral test: if not cached, the implementation
     # has not yet provided a testable local path and the assertion is intentionally red.
     assert session is not None
-    assert {m["metadata"]["session_id"] for m in session.messages} == {"source-session-123"}
+    assert {m["metadata"]["session_id"] for m in session.messages} == {
+        "source-session-123"
+    }
 
 
 def test_current_sync_session_overrides_initialized_source_session_after_switch():
@@ -267,7 +310,9 @@ def test_current_sync_session_overrides_initialized_source_session_after_switch(
     provider._cron_skipped = False
     provider._session_initialized = True
 
-    provider.sync_turn("after switch", "current response", session_id="source-session-B")
+    provider.sync_turn(
+        "after switch", "current response", session_id="source-session-B"
+    )
     assert provider._sync_thread is not None
     provider._sync_thread.join(timeout=1)
 
@@ -289,7 +334,10 @@ def test_runtime_aliases_preserve_one_human_peer_across_interfaces():
         write_frequency="session",
     )
     peers = []
-    for interface, runtime_id in (("telegram", "telegram-42"), ("discord", "discord-99")):
+    for interface, runtime_id in (
+        ("telegram", "telegram-42"),
+        ("discord", "discord-99"),
+    ):
         manager = HonchoSessionManager(
             honcho=MagicMock(),
             config=cfg,
@@ -298,7 +346,9 @@ def test_runtime_aliases_preserve_one_human_peer_across_interfaces():
             source_session_id=f"{interface}-session",
         )
         manager._get_or_create_peer = MagicMock(return_value=MagicMock())
-        manager._get_or_create_honcho_session = MagicMock(return_value=(MagicMock(), []))
+        manager._get_or_create_honcho_session = MagicMock(
+            return_value=(MagicMock(), [])
+        )
         session = manager.get_or_create(f"{interface}:chat")
         manager.add_source_message(session, "user", "same human")
         peers.append(session.messages[0]["metadata"]["human_peer"])
@@ -381,7 +431,9 @@ def test_non_json_metadata_values_fail_closed_before_sdk_serialization():
     session = _cached_session()
     mgr.add_source_message(session, "user", "safe content")
 
-    assert session.messages[0]["metadata"]["extensions"]["custom"] == "«redacted-metadata»"
+    assert (
+        session.messages[0]["metadata"]["extensions"]["custom"] == "«redacted-metadata»"
+    )
 
 
 def test_loaded_synced_messages_reconstruct_sdk_metadata():
@@ -393,7 +445,9 @@ def test_loaded_synced_messages_reconstruct_sdk_metadata():
         metadata={"schema": "agador.provenance/v1", "event_id": "existing-event"},
     )
     mgr._get_or_create_peer = MagicMock(return_value=MagicMock())
-    mgr._get_or_create_honcho_session = MagicMock(return_value=(MagicMock(), [existing]))
+    mgr._get_or_create_honcho_session = MagicMock(
+        return_value=(MagicMock(), [existing])
+    )
 
     loaded = mgr.get_or_create("loaded-session")
     assert loaded.messages[0]["metadata"] == existing.metadata

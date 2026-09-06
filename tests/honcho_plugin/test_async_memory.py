@@ -29,6 +29,7 @@ from plugins.memory.honcho.session import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_session(**kwargs) -> HonchoSession:
     return HonchoSession(
         key=kwargs.get("key", "cli:test"),
@@ -86,6 +87,7 @@ def make_manager(monkeypatch):
 # write_frequency parsing from config file
 # ---------------------------------------------------------------------------
 
+
 class TestWriteFrequencyParsing:
     def test_string_async(self, tmp_path):
         cfg_file = tmp_path / "config.json"
@@ -93,21 +95,21 @@ class TestWriteFrequencyParsing:
         cfg = HonchoClientConfig.from_global_config(config_path=cfg_file)
         assert cfg.write_frequency == "async"
 
-
     def test_integer_frequency(self, tmp_path):
         cfg_file = tmp_path / "config.json"
         cfg_file.write_text(json.dumps({"apiKey": "k", "writeFrequency": 5}))
         cfg = HonchoClientConfig.from_global_config(config_path=cfg_file)
         assert cfg.write_frequency == 5
 
-
     def test_host_block_overrides_root(self, tmp_path):
         cfg_file = tmp_path / "config.json"
-        cfg_file.write_text(json.dumps({
-            "apiKey": "k",
-            "writeFrequency": "turn",
-            "hosts": {"hermes": {"writeFrequency": "session"}},
-        }))
+        cfg_file.write_text(
+            json.dumps({
+                "apiKey": "k",
+                "writeFrequency": "turn",
+                "hosts": {"hermes": {"writeFrequency": "session"}},
+            })
+        )
         cfg = HonchoClientConfig.from_global_config(config_path=cfg_file)
         assert cfg.write_frequency == "session"
 
@@ -122,6 +124,7 @@ class TestWriteFrequencyParsing:
 # resolve_session_name with session_title
 # ---------------------------------------------------------------------------
 
+
 class TestResolveSessionNameTitle:
     def test_manual_override_beats_title(self):
         cfg = HonchoClientConfig(sessions={"/my/project": "manual-name"})
@@ -133,13 +136,11 @@ class TestResolveSessionNameTitle:
         result = cfg.resolve_session_name("/some/dir", session_title="my-project")
         assert result == "my-project"
 
-
     def test_title_sanitized(self):
         cfg = HonchoClientConfig()
         result = cfg.resolve_session_name("/some/dir", session_title="my project/name!")
         # trailing dashes stripped by .strip('-')
         assert result == "my-project-name"
-
 
     def test_none_title_falls_back_to_dirname(self):
         cfg = HonchoClientConfig()
@@ -153,14 +154,19 @@ class TestResolveSessionNameTitle:
 
     def test_per_session_uses_session_id(self):
         cfg = HonchoClientConfig(session_strategy="per-session")
-        result = cfg.resolve_session_name("/some/dir", session_id="20260309_175514_9797dd")
+        result = cfg.resolve_session_name(
+            "/some/dir", session_id="20260309_175514_9797dd"
+        )
         assert result == "20260309_175514_9797dd"
-
 
     def test_gateway_key_beats_per_session_id(self):
         # Gateways keep per-chat isolation even in per-session.
         cfg = HonchoClientConfig(session_strategy="per-session")
-        result = cfg.resolve_session_name("/some/dir", gateway_session_key="agent:main:telegram:dm:42", session_id="20260309_175514_9797dd")
+        result = cfg.resolve_session_name(
+            "/some/dir",
+            gateway_session_key="agent:main:telegram:dm:42",
+            session_id="20260309_175514_9797dd",
+        )
         assert result == "agent-main-telegram-dm-42"
 
     def test_global_strategy_returns_workspace(self):
@@ -172,6 +178,7 @@ class TestResolveSessionNameTitle:
 # ---------------------------------------------------------------------------
 # save() routing per write_frequency
 # ---------------------------------------------------------------------------
+
 
 class TestSaveRouting:
     def _make_session_with_message(self, mgr=None):
@@ -230,6 +237,7 @@ class TestSaveRouting:
 # flush_all()
 # ---------------------------------------------------------------------------
 
+
 class TestFlushAll:
     def test_flushes_all_cached_sessions(self, make_manager):
         mgr = make_manager(write_frequency="session")
@@ -269,6 +277,7 @@ class TestFlushAll:
 # ---------------------------------------------------------------------------
 # async writer thread lifecycle
 # ---------------------------------------------------------------------------
+
 
 class TestAsyncWriterThread:
     def test_thread_starts_lazily_on_first_enqueue(self, make_manager):
@@ -366,6 +375,7 @@ class TestAsyncWriterThread:
 # async direct delivery failure
 # ---------------------------------------------------------------------------
 
+
 class TestAsyncWriterFailure:
     def test_boundary_exception_is_not_retried(self, make_manager):
         mgr = make_manager(write_frequency="async")
@@ -389,7 +399,9 @@ class TestAsyncWriterFailure:
         assert call_count[0] == 1
         assert mgr.last_delivery_outcome.state is DeliveryState.FAILED
 
-    def test_terminal_failure_is_retained_without_claiming_drop(self, make_manager, caplog):
+    def test_terminal_failure_is_retained_without_claiming_drop(
+        self, make_manager, caplog
+    ):
         mgr = make_manager(write_frequency="async")
         mgr._ensure_async_writer()
         sess = _make_session()
@@ -412,7 +424,9 @@ class TestAsyncWriterFailure:
 
         with caplog.at_level("ERROR", logger="plugins.memory.honcho.session"):
             mgr._async_queue.put(sess)
-            assert attempt_done.wait(timeout=10), "async writer never attempted delivery"
+            assert attempt_done.wait(timeout=10), (
+                "async writer never attempted delivery"
+            )
 
         mgr.stop_async_writer()
         assert call_count[0] == 1
@@ -528,7 +542,8 @@ class TestMemoryFileMigrationOwnerGate:
         assert honcho_session.upload_file.call_count == 0
 
     def test_no_declared_owner_with_gateway_identity_is_skipped(
-            self, tmp_path, make_manager):
+        self, tmp_path, make_manager
+    ):
         """Without peerName nobody messaging through a gateway can be proven
         to be the owner — migration must not run."""
         mgr = make_manager(
@@ -612,6 +627,7 @@ class TestMemoryFileMigrationOwnerGate:
 # HonchoClientConfig dataclass defaults for new fields
 # ---------------------------------------------------------------------------
 
+
 class TestNewConfigFieldDefaults:
     def test_write_frequency_default(self):
         cfg = HonchoClientConfig()
@@ -627,4 +643,3 @@ class TestPrefetchCacheAccessors:
 
         assert mgr.pop_context_result("cli:test") == payload
         assert mgr.pop_context_result("cli:test") == {}
-

@@ -13,6 +13,7 @@ import ipaddress
 import json
 import logging
 import os
+
 # --- per-identity client cache ------------------------------------------- One slot per client identity,
 # replacing the single process-wide slot that pinned the first profile's workspace and bearer for every
 # later profile in multi-profile processes (#69123 multiplexed gateway, #74065 dashboard). The legacy names
@@ -28,8 +29,13 @@ from hermes_cli.profiles import _get_default_hermes_home
 from hermes_constants import get_hermes_home
 
 from plugins.memory.honcho.client_cache import (
-    _DEFAULT_HTTP_TIMEOUT, _client_cache_key, _client_slots, _client_slots_lock,
-    _honcho_json_timeout_memo, _refresh_oauth, _slot_for,
+    _DEFAULT_HTTP_TIMEOUT,
+    _client_cache_key,
+    _client_slots,
+    _client_slots_lock,
+    _honcho_json_timeout_memo,
+    _refresh_oauth,
+    _slot_for,
 )
 
 if TYPE_CHECKING:
@@ -45,7 +51,9 @@ def _sanitize_url(url: str | None) -> str | None:
     escape in a pasted URL otherwise makes the SDK raise at client construction."""
     if url is None or all(0x20 <= ord(c) < 0x7F for c in url):
         return url
-    logger.warning("Honcho base_url contains non-printable characters and will be ignored: %r", url)
+    logger.warning(
+        "Honcho base_url contains non-printable characters and will be ignored: %r", url
+    )
     return None
 
 
@@ -53,7 +61,9 @@ def profile_host_key(profile: str | None) -> str:
     """Return the safe Honcho host key for a Hermes profile."""
     if not profile or profile in {"default", "custom"}:
         return HOST
-    sanitized = "".join(c if c.isalnum() or c in "_-" else "_" for c in profile).strip("_")
+    sanitized = "".join(c if c.isalnum() or c in "_-" else "_" for c in profile).strip(
+        "_"
+    )
     return f"{HOST}_{sanitized or 'profile'}"
 
 
@@ -63,7 +73,7 @@ def _host_block(raw: dict, host: str) -> dict:
     block = hosts.get(host, {})
     if block or not host.startswith(f"{HOST}_"):
         return block
-    return hosts.get(f"{HOST}.{host[len(HOST) + 1:]}", {})
+    return hosts.get(f"{HOST}.{host[len(HOST) + 1 :]}", {})
 
 
 def resolve_active_host() -> str:
@@ -74,12 +84,15 @@ def resolve_active_host() -> str:
         return explicit
     try:
         from hermes_cli.profiles import get_active_profile_name
+
         profile_host = profile_host_key(get_active_profile_name())
     except Exception:
         profile_host = HOST
     if profile_host == HOST:
         try:
-            default_host = str(_read_config(resolve_config_path()).get("defaultHost", "")).strip()
+            default_host = str(
+                _read_config(resolve_config_path()).get("defaultHost", "")
+            ).strip()
         except Exception:
             default_host = ""
         if default_host:
@@ -123,8 +136,18 @@ _VALID_REASONING_LEVELS = ("minimal", "low", "medium", "high", "max")
 # Granular observation booleans derived from the legacy string mode; explicit
 # per-peer config always wins over these presets.
 _OBSERVATION_PRESETS = {
-    "directional": {"user_observe_me": True, "user_observe_others": True, "ai_observe_me": True, "ai_observe_others": True},
-    "unified": {"user_observe_me": True, "user_observe_others": False, "ai_observe_me": False, "ai_observe_others": True},
+    "directional": {
+        "user_observe_me": True,
+        "user_observe_others": True,
+        "ai_observe_me": True,
+        "ai_observe_others": True,
+    },
+    "unified": {
+        "user_observe_me": True,
+        "user_observe_others": False,
+        "ai_observe_me": False,
+        "ai_observe_others": True,
+    },
 }
 
 
@@ -166,7 +189,9 @@ def _parse_dialectic_depth_levels(vals, depth: int) -> list[str] | None:
     """First list value, validated and padded/truncated to ``depth``; None if unset."""
     for val in vals:
         if isinstance(val, list):
-            levels = [lvl if lvl in _VALID_REASONING_LEVELS else "low" for lvl in val[:depth]]
+            levels = [
+                lvl if lvl in _VALID_REASONING_LEVELS else "low" for lvl in val[:depth]
+            ]
             return levels + ["low"] * (depth - len(levels))
     return None
 
@@ -177,7 +202,9 @@ def _resolve_observation(mode: str, observation_obj: dict | None) -> dict:
     if not isinstance(observation_obj, dict) or not observation_obj:
         return dict(preset)
     return {
-        f"{kind}_observe_{who}": (observation_obj.get(kind) or {}).get(json_key, preset[f"{kind}_observe_{who}"])
+        f"{kind}_observe_{who}": (observation_obj.get(kind) or {}).get(
+            json_key, preset[f"{kind}_observe_{who}"]
+        )
         for kind in ("user", "ai")
         for who, json_key in (("me", "observeMe"), ("others", "observeOthers"))
     }
@@ -223,7 +250,10 @@ class _HostLookup:
         source = self.present(key)
         if not isinstance(source, dict):
             return {}
-        pairs = ((str(k).strip(), str(v).strip() if v is not None else "") for k, v in source.items())
+        pairs = (
+            (str(k).strip(), str(v).strip() if v is not None else "")
+            for k, v in source.items()
+        )
         return {k: v for k, v in pairs if k and v}
 
     def json_object(self, key: str) -> dict[str, Any]:
@@ -251,13 +281,19 @@ def _is_local_base_url(base_url: str | None) -> bool:
     except ValueError:
         return False
     # Tailscale/other VPN setups often sit in carrier-grade NAT space (100.64.0.0/10).
-    cgnat = ip.version == 4 and ipaddress.ip_address("100.64.0.0") <= ip <= ipaddress.ip_address("100.127.255.255")
+    cgnat = ip.version == 4 and ipaddress.ip_address(
+        "100.64.0.0"
+    ) <= ip <= ipaddress.ip_address("100.127.255.255")
     return ip.is_loopback or ip.is_private or ip.is_link_local or cgnat
 
 
 def _env_base_url() -> str | None:
     """HONCHO_BASE_URL / HONCHO_URL (the SDK's own var); a deployment setting, so plain os.environ."""
-    return os.environ.get("HONCHO_BASE_URL", "").strip() or os.environ.get("HONCHO_URL", "").strip() or None
+    return (
+        os.environ.get("HONCHO_BASE_URL", "").strip()
+        or os.environ.get("HONCHO_URL", "").strip()
+        or None
+    )
 
 
 def _connection_fields(look: _HostLookup, host: str, path: Path) -> dict[str, Any]:
@@ -266,23 +302,44 @@ def _connection_fields(look: _HostLookup, host: str, path: Path) -> dict[str, An
     api_key = look.pick("apiKey") or get_secret("HONCHO_API_KEY")
     # Named-profile host blocks do NOT inherit the default host's apiKey (profiles
     # are credential-isolated); the failure is silent 401s, so warn loudly.
-    if not api_key and host_block and host != HOST and _host_block(raw, HOST).get("apiKey"):
-        logger.warning("Honcho host block '%s' has no apiKey; the default '%s' host's key "
-                       "is NOT inherited (profiles are credential-isolated). Set apiKey on "
-                       "hosts.%s in %s or this profile runs unauthenticated.", host, HOST, host, path)
+    if (
+        not api_key
+        and host_block
+        and host != HOST
+        and _host_block(raw, HOST).get("apiKey")
+    ):
+        logger.warning(
+            "Honcho host block '%s' has no apiKey; the default '%s' host's key "
+            "is NOT inherited (profiles are credential-isolated). Set apiKey on "
+            "hosts.%s in %s or this profile runs unauthenticated.",
+            host,
+            HOST,
+            host,
+            path,
+        )
     # The SDK's native format (and Claude Desktop) nests the URL at endpoint.baseUrl;
     # read it before the flat Hermes spellings.
     endpoint_block = raw.get("endpoint")
-    native_base_url = endpoint_block.get("baseUrl") if isinstance(endpoint_block, dict) else None
-    base_url = _sanitize_url(host_block.get("baseUrl") or host_block.get("base_url") or native_base_url
-                             or raw.get("baseUrl") or raw.get("base_url") or _env_base_url())
+    native_base_url = (
+        endpoint_block.get("baseUrl") if isinstance(endpoint_block, dict) else None
+    )
+    base_url = _sanitize_url(
+        host_block.get("baseUrl")
+        or host_block.get("base_url")
+        or native_base_url
+        or raw.get("baseUrl")
+        or raw.get("base_url")
+        or _env_base_url()
+    )
     return {
         "workspace_id": look.pick("workspace") or host,
         "ai_peer": look.pick("aiPeer") or host,
         "api_key": api_key,
         "environment": look.pick("environment", "production"),
         "base_url": base_url,
-        "timeout": _resolve_optional_float(*look.vals("timeout", "requestTimeout"), os.environ.get("HONCHO_TIMEOUT")),
+        "timeout": _resolve_optional_float(
+            *look.vals("timeout", "requestTimeout"), os.environ.get("HONCHO_TIMEOUT")
+        ),
         # Explicit enabled (host, then root) wins; else auto-enable on key/url.
         "enabled": _first_set(*look.vals("enabled"), default=bool(api_key or base_url)),
     }
@@ -296,7 +353,10 @@ def _behavior_fields(look: _HostLookup, explicitly_configured: bool) -> dict[str
     # Migration guard: configs that predate observationMode keep the old
     # "unified" default; fresh installs get "directional" (all observations on).
     observation_mode = _normalize_choice(
-        look.pick("observationMode") or ("unified" if explicitly_configured else "directional"), _OBSERVATION_MODES)
+        look.pick("observationMode")
+        or ("unified" if explicitly_configured else "directional"),
+        _OBSERVATION_MODES,
+    )
     return {
         "peer_name": look.pick("peerName"),
         # pinUserPeer is the clearer name; the original pinPeerName stays accepted.
@@ -311,19 +371,27 @@ def _behavior_fields(look: _HostLookup, explicitly_configured: bool) -> dict[str
         "dialectic_dynamic": look.flag("dialecticDynamic", default=True),
         "dialectic_max_chars": look.parsed("dialecticMaxChars", int, 600),
         "dialectic_depth": depth,
-        "dialectic_depth_levels": _parse_dialectic_depth_levels(look.vals("dialecticDepthLevels"), depth),
+        "dialectic_depth_levels": _parse_dialectic_depth_levels(
+            look.vals("dialecticDepthLevels"), depth
+        ),
         "reasoning_heuristic": look.flag("reasoningHeuristic", default=True),
         "reasoning_level_cap": look.pick("reasoningLevelCap") or "high",
         "message_max_chars": look.parsed("messageMaxChars", int, 25000),
         "dialectic_max_input_chars": look.parsed("dialecticMaxInputChars", int, 10000),
-        "recall_mode": _normalize_choice(look.pick("recallMode") or "hybrid", _RECALL_MODES),
+        "recall_mode": _normalize_choice(
+            look.pick("recallMode") or "hybrid", _RECALL_MODES
+        ),
         "init_on_session_start": look.flag("initOnSessionStart", default=False),
         "injection_frequency": look.pick("injectionFrequency", "every-turn"),
         "context_cadence": look.parsed("contextCadence", int, 1),
         "dialectic_cadence": look.parsed("dialecticCadence", int, 1),
         "query_rewrite": look.flag("queryRewrite", default=False),
-        "first_turn_base_wait": look.parsed("firstTurnBaseWait", lambda v: max(0.0, float(v)), 3.0),
-        "first_turn_dialectic_wait": look.parsed("firstTurnDialecticWait", lambda v: max(0.0, float(v)), 2.0),
+        "first_turn_base_wait": look.parsed(
+            "firstTurnBaseWait", lambda v: max(0.0, float(v)), 3.0
+        ),
+        "first_turn_dialectic_wait": look.parsed(
+            "firstTurnDialecticWait", lambda v: max(0.0, float(v)), 2.0
+        ),
         "observation_mode": observation_mode,
         **_resolve_observation(observation_mode, look.pick("observation")),
         "session_strategy": look.pick("sessionStrategy", "per-directory"),
@@ -352,20 +420,28 @@ class HonchoClientConfig:
     pin_peer_name: bool = False
     # Gateway runtime user id -> stable Honcho peer; host map replaces root map.
     user_peer_aliases: dict[str, str] = field(default_factory=dict)
-    runtime_peer_prefix: str = ""  # prefix for unknown runtime user ids, e.g. "telegram_"
+    runtime_peer_prefix: str = (
+        ""  # prefix for unknown runtime user ids, e.g. "telegram_"
+    )
     # Static provider-native metadata; runtime provenance fields override conflicts.
     message_metadata: dict[str, Any] = field(default_factory=dict)
     # Toggles
     enabled: bool = False
     save_messages: bool = True
-    write_frequency: str | int = "async"  # "async" | "turn" | "session" | every-N-turns int
+    write_frequency: str | int = (
+        "async"  # "async" | "turn" | "session" | every-N-turns int
+    )
     context_tokens: int | None = None  # prefetch budget; None = uncapped
     # Dialectic (peer.chat) settings
     dialectic_reasoning_level: str = "low"  # minimal | low | medium | high | max
     dialectic_dynamic: bool = True  # model may override the level via honcho_reasoning
     dialectic_max_chars: int = 600  # auto-injection cap; explicit calls bypass it
-    dialectic_depth: int = 1  # .chat() passes per cycle (1-3): audit / synthesis / reconcile
-    dialectic_depth_levels: list[str] | None = None  # per-pass levels; None = proportional defaults
+    dialectic_depth: int = (
+        1  # .chat() passes per cycle (1-3): audit / synthesis / reconcile
+    )
+    dialectic_depth_levels: list[str] | None = (
+        None  # per-pass levels; None = proportional defaults
+    )
     reasoning_heuristic: bool = True  # scale auto-injected level up on longer queries
     reasoning_level_cap: str = "high"
     # Honcho API limits (Honcho cloud: 25000 / 10000) — configurable for self-hosts
@@ -373,11 +449,15 @@ class HonchoClientConfig:
     dialectic_max_input_chars: int = 10000
     # "hybrid" (context + tools) | "context" (no tools) | "tools" (no auto context)
     recall_mode: str = "hybrid"
-    init_on_session_start: bool = False  # tools mode: init eagerly instead of on first tool call
+    init_on_session_start: bool = (
+        False  # tools mode: init eagerly instead of on first tool call
+    )
     injection_frequency: str = "every-turn"  # or "first-turn"
     context_cadence: int = 1  # min turns between peer.context() calls
     dialectic_cadence: int = 1  # min turns between dialectic prefetches
-    query_rewrite: bool = False  # rewrite the user message into a retrieval query (one aux LLM call)
+    query_rewrite: bool = (
+        False  # rewrite the user message into a retrieval query (one aux LLM call)
+    )
     # Bounded synchronous waits on turn 1, seconds; 0 = fully async first turn.
     first_turn_base_wait: float = 3.0
     first_turn_dialectic_wait: float = 2.0
@@ -407,24 +487,35 @@ class HonchoClientConfig:
 
     def bound_config_path(self) -> Path:
         """Config path this was resolved from; ambient fallback for hand-built configs."""
-        return self.config_path if self.config_path is not None else resolve_config_path()
+        return (
+            self.config_path if self.config_path is not None else resolve_config_path()
+        )
 
     @classmethod
-    def from_env(cls, workspace_id: str = "hermes", host: str | None = None) -> HonchoClientConfig:
+    def from_env(
+        cls, workspace_id: str = "hermes", host: str | None = None
+    ) -> HonchoClientConfig:
         """Create config from environment variables (fallback)."""
         resolved_host = host or resolve_active_host()
         api_key = get_secret("HONCHO_API_KEY")
         base_url = _sanitize_url(_env_base_url())
         return cls(
-            host=resolved_host, workspace_id=workspace_id, api_key=api_key, base_url=base_url,
+            host=resolved_host,
+            workspace_id=workspace_id,
+            api_key=api_key,
+            base_url=base_url,
             environment=os.environ.get("HONCHO_ENVIRONMENT", "production"),
             timeout=_resolve_optional_float(os.environ.get("HONCHO_TIMEOUT")),
-            ai_peer=resolved_host, enabled=bool(api_key or base_url),
-            config_path=resolve_config_path(), hermes_home=get_hermes_home(),
+            ai_peer=resolved_host,
+            enabled=bool(api_key or base_url),
+            config_path=resolve_config_path(),
+            hermes_home=get_hermes_home(),
         )
 
     @classmethod
-    def from_global_config(cls, host: str | None = None, config_path: Path | None = None) -> HonchoClientConfig:
+    def from_global_config(
+        cls, host: str | None = None, config_path: Path | None = None
+    ) -> HonchoClientConfig:
         """Config from the resolved Honcho config path, falling back to env. ``host=None``
         derives it from the active Hermes profile."""
         resolved_host = host or resolve_active_host()
@@ -442,9 +533,14 @@ class HonchoClientConfig:
         explicitly_configured = bool(host_block) or raw.get("enabled") is True
         look = _HostLookup(host_block, raw)
         return cls(
-            host=resolved_host, **_connection_fields(look, resolved_host, path), **_behavior_fields(look, explicitly_configured),
-            sessions=raw.get("sessions", {}), raw=raw, explicitly_configured=explicitly_configured,
-            config_path=path, hermes_home=get_hermes_home(),
+            host=resolved_host,
+            **_connection_fields(look, resolved_host, path),
+            **_behavior_fields(look, explicitly_configured),
+            sessions=raw.get("sessions", {}),
+            raw=raw,
+            explicitly_configured=explicitly_configured,
+            config_path=path,
+            hermes_home=get_hermes_home(),
         )
 
     @staticmethod
@@ -453,8 +549,16 @@ class HonchoClientConfig:
         import subprocess
 
         try:
-            root = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, encoding='utf-8',
-                                  errors='replace', cwd=cwd, timeout=5, stdin=subprocess.DEVNULL)
+            root = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                cwd=cwd,
+                timeout=5,
+                stdin=subprocess.DEVNULL,
+            )
         except (OSError, subprocess.TimeoutExpired):
             return None
         return Path(root.stdout.strip()).name if root.returncode == 0 else None
@@ -468,7 +572,10 @@ class HonchoClientConfig:
         """Truncate to the limit with a ``-<sha256 prefix>`` suffix hashed over the ORIGINAL key:
         two long keys sharing a prefix stay distinct; keys that sanitize identically still
         collide intentionally (same logical session)."""
-        max_len, hash_len = cls._HONCHO_SESSION_ID_MAX_LEN, cls._HONCHO_SESSION_ID_HASH_LEN
+        max_len, hash_len = (
+            cls._HONCHO_SESSION_ID_MAX_LEN,
+            cls._HONCHO_SESSION_ID_HASH_LEN,
+        )
         if len(sanitized) <= max_len:
             return sanitized
         digest = hashlib.sha256(original.encode("utf-8")).hexdigest()[:hash_len]
@@ -476,11 +583,18 @@ class HonchoClientConfig:
         return f"{prefix}-{digest}"
 
     def _with_peer_prefix(self, name: str) -> str:
-        return f"{self.peer_name}-{name}" if self.session_peer_prefix and self.peer_name else name
+        return (
+            f"{self.peer_name}-{name}"
+            if self.session_peer_prefix and self.peer_name
+            else name
+        )
 
     def resolve_session_name(
-        self, cwd: str | None = None, session_title: str | None = None,
-        session_id: str | None = None, gateway_session_key: str | None = None,
+        self,
+        cwd: str | None = None,
+        session_title: str | None = None,
+        session_id: str | None = None,
+        gateway_session_key: str | None = None,
     ) -> str | None:
         """Resolve the Honcho session name. Order: gateway session key (per-chat isolation no
         cwd/strategy gives) -> per-session strategy's session_id (authoritative, so a generated
@@ -489,11 +603,13 @@ class HonchoClientConfig:
         import re
 
         def _slug(text: str) -> str:
-            return re.sub(r'[^a-zA-Z0-9_-]+', '-', text).strip('-')
+            return re.sub(r"[^a-zA-Z0-9_-]+", "-", text).strip("-")
 
         cwd = cwd or os.getcwd()
         if gateway_session_key and _slug(gateway_session_key):
-            return self._enforce_session_id_limit(_slug(gateway_session_key), gateway_session_key)
+            return self._enforce_session_id_limit(
+                _slug(gateway_session_key), gateway_session_key
+            )
         if self.session_strategy == "per-session" and session_id:
             return self._with_peer_prefix(session_id)
         manual = self.sessions.get(cwd)
@@ -508,14 +624,18 @@ class HonchoClientConfig:
         return self.workspace_id
 
 
-def spawn_context_thread(target, *, name: str, daemon: bool = True, args: tuple = ()) -> "_threading.Thread":
+def spawn_context_thread(
+    target, *, name: str, daemon: bool = True, args: tuple = ()
+) -> "_threading.Thread":
     """Thread that inherits the caller's contextvars: profile isolation is a ContextVar
     (set_hermes_home_override) and a plain Thread starts EMPTY, so ambient resolution on it
     would silently land on the default profile."""
     import contextvars
 
     ctx = contextvars.copy_context()
-    return _threading.Thread(target=lambda: ctx.run(target, *args), name=name, daemon=daemon)
+    return _threading.Thread(
+        target=lambda: ctx.run(target, *args), name=name, daemon=daemon
+    )
 
 
 def get_honcho_client(config: HonchoClientConfig | None = None) -> Honcho:
@@ -544,56 +664,84 @@ def get_honcho_client(config: HonchoClientConfig | None = None) -> Honcho:
     _refresh_oauth(config)
 
     if not config.api_key and not config.base_url:
-        raise ValueError("Honcho API key not found. Get your API key at https://app.honcho.dev, "
-                         "then run 'hermes honcho setup' or set HONCHO_API_KEY. "
-                         "For local instances, set HONCHO_BASE_URL instead.")
+        raise ValueError(
+            "Honcho API key not found. Get your API key at https://app.honcho.dev, "
+            "then run 'hermes honcho setup' or set HONCHO_API_KEY. "
+            "For local instances, set HONCHO_BASE_URL instead."
+        )
 
     return slot.get(lambda: _build_client(config))
 
 
 def _build_client(config: HonchoClientConfig) -> "Honcho":
     """Construct the SDK client (runs inside the slot factory so racing callers share one)."""
-    with contextlib.suppress(Exception):  # lazy-dep failures fall through to the canonical import error below
+    with contextlib.suppress(
+        Exception
+    ):  # lazy-dep failures fall through to the canonical import error below
         from tools.lazy_deps import ensure as _lazy_ensure
+
         _lazy_ensure("memory.honcho", prompt=False)
     try:
         from honcho import Honcho
     except ImportError:
-        raise ImportError("honcho-ai is required for Honcho integration. Install it with: pip install honcho-ai  "
-                          "(or run `hermes honcho setup` to configure).")
+        raise ImportError(
+            "honcho-ai is required for Honcho integration. Install it with: pip install honcho-ai  "
+            "(or run `hermes honcho setup` to configure)."
+        )
 
     # config.yaml honcho.base_url / timeout fill whatever honcho.json left unset.
     base_url, timeout = config.base_url, config.timeout
     if not base_url or timeout is None:
         with contextlib.suppress(Exception):
             from hermes_cli.config import load_config
+
             honcho_cfg = load_config().get("honcho", {})
             if isinstance(honcho_cfg, dict):
-                base_url = base_url or _sanitize_url(honcho_cfg.get("base_url", "").strip() or None)
+                base_url = base_url or _sanitize_url(
+                    honcho_cfg.get("base_url", "").strip() or None
+                )
                 if timeout is None:
-                    timeout = _resolve_optional_float(honcho_cfg.get("timeout"), honcho_cfg.get("request_timeout"))
+                    timeout = _resolve_optional_float(
+                        honcho_cfg.get("timeout"), honcho_cfg.get("request_timeout")
+                    )
     if timeout is None:
         timeout = _DEFAULT_HTTP_TIMEOUT  # an unconfigured install must not hang on a stalled request
 
     if base_url:
-        logger.info("Initializing Honcho client (base_url: %s, workspace: %s)", base_url, config.workspace_id)
+        logger.info(
+            "Initializing Honcho client (base_url: %s, workspace: %s)",
+            base_url,
+            config.workspace_id,
+        )
     else:
         # Name the SDK's environment fallback at INFO so a self-hosted user whose
         # config wasn't picked up notices they're talking to the public cloud.
-        logger.info("Initializing Honcho client (host: %s, workspace: %s, base_url unset — SDK will resolve from environment=%s)",
-                    config.host, config.workspace_id, config.environment)
+        logger.info(
+            "Initializing Honcho client (host: %s, workspace: %s, base_url unset — SDK will resolve from environment=%s)",
+            config.host,
+            config.workspace_id,
+            config.environment,
+        )
 
     # Local instances need no key but the SDK wants a non-empty string: honor a
     # key set EXPLICITLY in honcho.json (host block or root) and treat an
     # env-sourced key as likely-cloud, substituting the placeholder.
     raw = config.raw or {}
     explicit_key = _host_block(raw, config.host).get("apiKey") or raw.get("apiKey")
-    api_key = "local" if _is_local_base_url(base_url) and not explicit_key else config.api_key
-    kwargs: dict = {"workspace_id": config.workspace_id, "api_key": api_key, "environment": config.environment, "timeout": timeout}
+    api_key = (
+        "local" if _is_local_base_url(base_url) and not explicit_key else config.api_key
+    )
+    kwargs: dict = {
+        "workspace_id": config.workspace_id,
+        "api_key": api_key,
+        "environment": config.environment,
+        "timeout": timeout,
+    }
     if base_url:
         # The SDK's route builders already carry the version prefix ("/v3/..."), so
         # strip a trailing version segment from any base_url to avoid "/v3/v3/...".
         import re
+
         kwargs["base_url"] = re.sub(r"/v\d+/*$", "", base_url).rstrip("/")
     return Honcho(**kwargs)
 
@@ -612,7 +760,7 @@ def reset_honcho_client() -> None:
 
 
 _PLUGIN_COMPAT_LAZY = {
-    'SingletonSlot': ('plugins.plugin_utils', 'SingletonSlot'),
+    "SingletonSlot": ("plugins.plugin_utils", "SingletonSlot"),
 }
 
 
@@ -622,6 +770,9 @@ def __getattr__(name):  # PEP 562 — lazy so no import cycles
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     import importlib
     from hermes_cli.plugin_compat import warn_once
+
     warn_once(__name__, name, *target)
     return getattr(importlib.import_module(target[0]), target[1])
+
+
 # ---- END PLUGIN-COMPAT ----

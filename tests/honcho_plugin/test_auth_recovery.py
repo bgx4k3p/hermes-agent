@@ -91,7 +91,9 @@ class TestExchangeRetry:
         saved = json.loads(path.read_text())["hosts"]["hermes"]
         assert saved["oauth"]["refreshToken"] == "hch-rt-new1"
 
-    def test_invalid_grant_stops_retries_and_marks_reauth_required(self, tmp_path, monkeypatch):
+    def test_invalid_grant_stops_retries_and_marks_reauth_required(
+        self, tmp_path, monkeypatch
+    ):
         path = tmp_path / "honcho.json"
         _write(path, {"hosts": {"hermes": _host_block()}})
         monkeypatch.setattr(oauth, "_REFRESH_RETRY_DELAY_SECONDS", 0)
@@ -124,15 +126,21 @@ class TestExchangeRetry:
         _write(path, {"hosts": {"hermes": _host_block()}})
         monkeypatch.setattr(oauth, "_REFRESH_RETRY_DELAY_SECONDS", 0)
         monkeypatch.setattr(
-            oauth, "_http_post_form_status",
+            oauth,
+            "_http_post_form_status",
             lambda *a, **k: (400, {"error": "invalid_grant"}),
         )
         oauth.ensure_fresh_token(path, "hermes", now=1000)
         assert oauth.reauth_required(path, "hermes") is True
 
         oauth.install_grant(
-            path, "hermes",
-            {"access_token": "hch-at-fresh", "refresh_token": "hch-rt-fresh", "expires_in": 3600},
+            path,
+            "hermes",
+            {
+                "access_token": "hch-at-fresh",
+                "refresh_token": "hch-rt-fresh",
+                "expires_in": 3600,
+            },
             client_id="hermes-desktop",
             token_endpoint="http://localhost:8000/oauth/token",
             now=2000,
@@ -146,8 +154,12 @@ class TestExchangeRetry:
         _write(path, {"hosts": {"hermes": _host_block()}})
         monkeypatch.setattr(oauth, "_REFRESH_RETRY_DELAY_SECONDS", 0)
         monkeypatch.setattr(
-            oauth, "_http_post_form_status",
-            lambda *a, **k: (400, {"error": "invalid_grant", "error_description": "grant revoked"}),
+            oauth,
+            "_http_post_form_status",
+            lambda *a, **k: (
+                400,
+                {"error": "invalid_grant", "error_description": "grant revoked"},
+            ),
         )
         with caplog.at_level(logging.WARNING, logger="plugins.memory.honcho.oauth"):
             oauth.ensure_fresh_token(path, "hermes", now=1000)
@@ -189,8 +201,11 @@ class TestForceRefreshToken:
         rotated["apiKey"] = "hch-at-2"
         _write(path, {"hosts": {"hermes": rotated}})
         monkeypatch.setattr(
-            oauth, "_http_post_form_status",
-            lambda *a, **k: pytest.fail("must adopt the on-disk rotation, not exchange"),
+            oauth,
+            "_http_post_form_status",
+            lambda *a, **k: pytest.fail(
+                "must adopt the on-disk rotation, not exchange"
+            ),
         )
         assert oauth.force_refresh_token(path, "hermes") == "hch-at-2"
 
@@ -343,8 +358,12 @@ class TestForceReauth:
 
         fake_client = object()
         applied = {}
-        monkeypatch.setattr(session_mod, "get_honcho_client", lambda *a, **k: fake_client)
-        monkeypatch.setattr(client_mod, "resolve_config_path", lambda: tmp_path / "honcho.json")
+        monkeypatch.setattr(
+            session_mod, "get_honcho_client", lambda *a, **k: fake_client
+        )
+        monkeypatch.setattr(
+            client_mod, "resolve_config_path", lambda: tmp_path / "honcho.json"
+        )
         monkeypatch.setattr(oauth, "force_refresh_token", lambda p, h: "hch-at-new")
 
         def apply(client, token):
@@ -361,7 +380,9 @@ class TestForceReauth:
     def test_returns_false_when_refresh_yields_nothing(self, tmp_path, monkeypatch):
         from plugins.memory.honcho import client as client_mod
 
-        monkeypatch.setattr(client_mod, "resolve_config_path", lambda: tmp_path / "honcho.json")
+        monkeypatch.setattr(
+            client_mod, "resolve_config_path", lambda: tmp_path / "honcho.json"
+        )
         monkeypatch.setattr(oauth, "force_refresh_token", lambda p, h: None)
         mgr = HonchoSessionManager(config=HonchoClientConfig(host="hermes"))
         assert mgr._force_reauth() is False
@@ -449,7 +470,8 @@ def _kill_grant(tmp_path, monkeypatch) -> Path:
     _write(path, {"hosts": {"hermes": _host_block()}})
     monkeypatch.setattr(oauth, "_REFRESH_RETRY_DELAY_SECONDS", 0)
     monkeypatch.setattr(
-        oauth, "_http_post_form_status",
+        oauth,
+        "_http_post_form_status",
         lambda *a, **k: (400, {"error": "invalid_grant"}),
     )
     oauth.ensure_fresh_token(path, "hermes", now=1000)
@@ -460,8 +482,13 @@ def _kill_grant(tmp_path, monkeypatch) -> Path:
 
 def _relogin(path: Path) -> None:
     oauth.install_grant(
-        path, "hermes",
-        {"access_token": "hch-at-fresh", "refresh_token": "hch-rt-fresh", "expires_in": 3600},
+        path,
+        "hermes",
+        {
+            "access_token": "hch-at-fresh",
+            "refresh_token": "hch-rt-fresh",
+            "expires_in": 3600,
+        },
         client_id="hermes-desktop",
         token_endpoint="http://localhost:8000/oauth/token",
     )
@@ -603,7 +630,9 @@ class _FlakyContextPeer:
         self.calls += 1
         if self.calls <= self.failures:
             raise Exception("Invalid or expired access token")
-        return SimpleNamespace(representation=self.representation, peer_card=["fact one"])
+        return SimpleNamespace(
+            representation=self.representation, peer_card=["fact one"]
+        )
 
 
 class TestContextAuthRetry:
@@ -658,7 +687,9 @@ class TestDeadGrantSkipsContextAndSearch:
             mgr.search_context("k", "query")
         client.search.assert_not_called()
 
-    def test_dead_grant_prefetch_returns_empty_and_arms_notice(self, tmp_path, monkeypatch):
+    def test_dead_grant_prefetch_returns_empty_and_arms_notice(
+        self, tmp_path, monkeypatch
+    ):
         _kill_grant(tmp_path, monkeypatch)
         peer = _FlakyContextPeer(failures=0)
         mgr = _make_manager(peer)
@@ -730,12 +761,17 @@ def _wire_rebuild(tmp_path, monkeypatch, fresh_client):
     from plugins.memory.honcho import session as session_mod
 
     clients = {"current": MagicMock()}
-    monkeypatch.setattr(session_mod, "get_honcho_client", lambda *a, **k: clients["current"])
-    monkeypatch.setattr(client_mod, "resolve_config_path", lambda: tmp_path / "honcho.json")
+    monkeypatch.setattr(
+        session_mod, "get_honcho_client", lambda *a, **k: clients["current"]
+    )
+    monkeypatch.setattr(
+        client_mod, "resolve_config_path", lambda: tmp_path / "honcho.json"
+    )
     monkeypatch.setattr(oauth, "force_refresh_token", lambda p, h: "hch-at-rotated")
     monkeypatch.setattr(oauth, "apply_token_to_client", lambda c, t: False)
     monkeypatch.setattr(
-        client_mod, "reset_honcho_client",
+        client_mod,
+        "reset_honcho_client",
         lambda: clients.__setitem__("current", fresh_client),
     )
     return clients
@@ -744,7 +780,9 @@ def _wire_rebuild(tmp_path, monkeypatch, fresh_client):
 class TestClientRebuildRetry:
     def test_flush_retry_uses_rebuilt_session_not_stale(self, tmp_path, monkeypatch):
         stale_session = MagicMock()
-        stale_session.add_messages.side_effect = Exception("Invalid or expired access token")
+        stale_session.add_messages.side_effect = Exception(
+            "Invalid or expired access token"
+        )
         stale_peer = MagicMock()
         stale_peer.message.side_effect = lambda content, **kwargs: content
 
@@ -828,7 +866,9 @@ class TestToolAuthVisibility:
             def search_context(self, key, query, max_tokens=800, peer="user"):
                 raise HonchoAuthError("Honcho rejected our credentials")
 
-        out = self._provider(_Mgr()).handle_tool_call("honcho_search", {"query": "schema"})
+        out = self._provider(_Mgr()).handle_tool_call(
+            "honcho_search", {"query": "schema"}
+        )
         assert "No relevant context found" not in out
         assert "authentication failed" in out
 
@@ -861,7 +901,9 @@ def _healthy_client():
     return client
 
 
-def _wire_init(tmp_path, monkeypatch, client, *, recall_mode="hybrid", dead_refresh=True):
+def _wire_init(
+    tmp_path, monkeypatch, client, *, recall_mode="hybrid", dead_refresh=True
+):
     """Route provider initialization through a real manager backed by ``client``."""
     from plugins.memory.honcho import client as client_mod
     from plugins.memory.honcho import session as session_mod
@@ -874,8 +916,12 @@ def _wire_init(tmp_path, monkeypatch, client, *, recall_mode="hybrid", dead_refr
     if dead_refresh:
         monkeypatch.setattr(oauth, "force_refresh_token", lambda p, h: None)
     cfg = HonchoClientConfig(
-        host="hermes", api_key="hch-at-old", enabled=True, recall_mode=recall_mode,
-        timeout=0.5, session_strategy="per-session",
+        host="hermes",
+        api_key="hch-at-old",
+        enabled=True,
+        recall_mode=recall_mode,
+        timeout=0.5,
+        session_strategy="per-session",
     )
     monkeypatch.setattr(
         client_mod.HonchoClientConfig, "from_global_config", lambda *a, **k: cfg
@@ -914,7 +960,9 @@ class TestInitAuthFailureNotice:
         for query in ("second question", "third question"):
             assert provider.prefetch(query) == ""
 
-    def test_dead_grant_during_session_setup_produces_notice(self, tmp_path, monkeypatch):
+    def test_dead_grant_during_session_setup_produces_notice(
+        self, tmp_path, monkeypatch
+    ):
         client = _healthy_client()
         env = {}
 
@@ -966,7 +1014,9 @@ class TestInitAuthFailureNotice:
         client.peer.side_effect = Exception("Invalid or expired access token")
         path = _wire_init(tmp_path, monkeypatch, client, recall_mode="tools")
         provider = _initialized_provider()
-        assert "authentication failed" in provider.handle_tool_call("honcho_profile", {})
+        assert "authentication failed" in provider.handle_tool_call(
+            "honcho_profile", {}
+        )
 
         _relogin(path)
         client.peer.side_effect = None
@@ -976,12 +1026,16 @@ class TestInitAuthFailureNotice:
         assert provider._session_initialized is True
         assert provider._init_auth_failure is None
 
-    def test_non_auth_init_timeout_fails_open_without_notice(self, tmp_path, monkeypatch):
+    def test_non_auth_init_timeout_fails_open_without_notice(
+        self, tmp_path, monkeypatch
+    ):
         client = MagicMock()
         client.peer.side_effect = TimeoutError("request timed out")
         _wire_init(tmp_path, monkeypatch, client, dead_refresh=False)
         reauths = []
-        monkeypatch.setattr(oauth, "force_refresh_token", lambda p, h: reauths.append(1))
+        monkeypatch.setattr(
+            oauth, "force_refresh_token", lambda p, h: reauths.append(1)
+        )
         provider = _initialized_provider()
 
         assert provider._manager is None
@@ -989,10 +1043,14 @@ class TestInitAuthFailureNotice:
         assert provider.prefetch("a real question") == ""
         assert reauths == []
 
-    def test_non_auth_tools_init_failure_keeps_generic_error(self, tmp_path, monkeypatch):
+    def test_non_auth_tools_init_failure_keeps_generic_error(
+        self, tmp_path, monkeypatch
+    ):
         client = MagicMock()
         client.peer.side_effect = TimeoutError("request timed out")
-        _wire_init(tmp_path, monkeypatch, client, recall_mode="tools", dead_refresh=False)
+        _wire_init(
+            tmp_path, monkeypatch, client, recall_mode="tools", dead_refresh=False
+        )
         provider = _initialized_provider()
 
         out = provider.handle_tool_call("honcho_profile", {})
@@ -1005,7 +1063,9 @@ class TestInitAuthFailureNotice:
 
 
 class TestExchangeBudget:
-    def test_timed_out_first_attempt_skips_retry_when_budget_spent(self, tmp_path, monkeypatch):
+    def test_timed_out_first_attempt_skips_retry_when_budget_spent(
+        self, tmp_path, monkeypatch
+    ):
         """A first attempt that consumed the whole budget must not start a
         second full-timeout exchange while holding the global refresh locks."""
         path = tmp_path / "honcho.json"
@@ -1050,7 +1110,9 @@ class TestExchangeBudget:
 
 
 class TestFailureCooldown:
-    def test_repeated_calls_within_cooldown_do_not_reexchange(self, tmp_path, monkeypatch):
+    def test_repeated_calls_within_cooldown_do_not_reexchange(
+        self, tmp_path, monkeypatch
+    ):
         """After a transient failure, waiting callers fail open instead of
         serializing their own full exchange cycles (dogpile guard)."""
         path = tmp_path / "honcho.json"
