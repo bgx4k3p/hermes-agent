@@ -14,310 +14,323 @@ from plugins.memory.config_schema import (
 )
 
 
+def _opts(*pairs: tuple[str, str]) -> tuple[ProviderFieldOption, ...]:
+    return tuple(ProviderFieldOption(value, label) for value, label in pairs)
+
+
 # Reasoning effort levels shared by dialectic-related selects.
-_REASONING_LEVELS = (
-    ProviderFieldOption("minimal", "Minimal"),
-    ProviderFieldOption("low", "Low"),
-    ProviderFieldOption("medium", "Medium"),
-    ProviderFieldOption("high", "High"),
-    ProviderFieldOption("max", "Max"),
+_REASONING_LEVELS = _opts(
+    ("minimal", "Minimal"),
+    ("low", "Low"),
+    ("medium", "Medium"),
+    ("high", "High"),
+    ("max", "Max"),
+)
+
+_SESSION_STRATEGY_INFO = (
+    "Per session: every conversation gets its own Honcho session. "
+    "Per directory: conversations from the same working directory share one. "
+    "Per repo: conversations from the same git repo share one. Global: everything shares a single session."
+)
+_WRITE_FREQUENCY_INFO = (
+    "async: write in the background as messages arrive. turn: flush after each turn. "
+    "session: flush when the session ends. A number N flushes every N turns."
+)
+_RECALL_MODE_INFO = (
+    "Hybrid: auto-injected context plus on-demand memory tools. Context only: injection without tools. "
+    "Tools only: the model queries memory explicitly, nothing is injected."
 )
 
 
+def _field(key, label, kind, description, *, group, **kw) -> ProviderField:
+    return ProviderField(
+        key=key, label=label, kind=kind, description=description, group=group, **kw
+    )
+
+
+# Inline fields form the curated compact panel; the rest surface only in the full-config modal.
 CONFIG_SCHEMA = ProviderConfigSchema(
     name="honcho",
     label="Honcho",
     storage=STORAGE_HONCHO_HOST_BLOCK,
     docs_url="https://docs.honcho.dev/v3/guides/integrations/hermes",
     fields=(
-        # — Connection —
-        ProviderField(
-            key="apiKey",
-            label="API key",
-            kind=KIND_SECRET,
+        # — Connection (inline) —
+        _field(
+            "apiKey",
+            "API key",
+            KIND_SECRET,
+            "Authenticate with Honcho Cloud. Not needed for a self-hosted base URL.",
             env_key="HONCHO_API_KEY",
-            description="Authenticate with Honcho Cloud. Not needed for a self-hosted base URL.",
             placeholder="Enter Honcho API key",
             inline=True,
             group="Connection",
         ),
-        ProviderField(
-            key="baseUrl",
-            label="Base URL",
-            kind=KIND_TEXT,
+        _field(
+            "baseUrl",
+            "Base URL",
+            KIND_TEXT,
+            "Self-hosted Honcho URL. Overrides the environment when set.",
             aliases=("base_url",),
             env_fallbacks=("HONCHO_BASE_URL",),
-            description="Self-hosted Honcho URL. Overrides the environment when set.",
             placeholder="https://… (self-hosted)",
             inline=True,
             group="Connection",
             scope="root",
         ),
-        ProviderField(
-            key="environment",
-            label="Environment",
-            kind=KIND_SELECT,
+        _field(
+            "environment",
+            "Environment",
+            KIND_SELECT,
+            "Honcho environment. Ignored when a base URL is set.",
             default="production",
             env_fallbacks=("HONCHO_ENVIRONMENT",),
-            description="Honcho environment. Ignored when a base URL is set.",
-            options=(
-                ProviderFieldOption("production", "Cloud"),
-                ProviderFieldOption("local", "Local"),
-            ),
+            options=_opts(("production", "Cloud"), ("local", "Local")),
             inline=True,
             group="Connection",
         ),
-        ProviderField(
-            key="workspace",
-            label="Workspace",
-            kind=KIND_TEXT,
-            description="Honcho workspace ID. Defaults to the profile host.",
+        _field(
+            "workspace",
+            "Workspace",
+            KIND_TEXT,
+            "Honcho workspace ID. Defaults to the profile host.",
             inline=True,
             group="Connection",
         ),
-        # — Identity —
-        ProviderField(
-            key="peerName",
-            label="Peer name",
-            kind=KIND_TEXT,
-            description="Your stable user peer. Unifies memory across platforms for single-user setups.",
+        # — Identity (inline) —
+        _field(
+            "peerName",
+            "Peer name",
+            KIND_TEXT,
+            "Your stable user peer. Unifies memory across platforms for single-user setups.",
             placeholder="e.g. eri",
             inline=True,
             group="Identity",
         ),
-        ProviderField(
-            key="aiPeer",
-            label="AI peer",
-            kind=KIND_TEXT,
-            description="The AI-side peer name. Defaults to the profile host.",
+        _field(
+            "aiPeer",
+            "AI peer",
+            KIND_TEXT,
+            "The AI-side peer name. Defaults to the profile host.",
             inline=True,
             group="Identity",
         ),
-        # — Session —
-        ProviderField(
-            key="sessionStrategy",
-            label="Session strategy",
-            kind=KIND_SELECT,
+        # — Session (inline) —
+        _field(
+            "sessionStrategy",
+            "Session strategy",
+            KIND_SELECT,
+            "How conversations map to Honcho sessions.",
             default="per-directory",
-            description="How conversations map to Honcho sessions.",
-            info=(
-                "Per session: every conversation gets its own Honcho session. "
-                "Per directory: conversations from the same working directory share one. "
-                "Per repo: conversations from the same git repo share one. "
-                "Global: everything shares a single session."
-            ),
-            options=(
-                ProviderFieldOption("per-session", "Per session"),
-                ProviderFieldOption("per-directory", "Per directory"),
-                ProviderFieldOption("per-repo", "Per repo"),
-                ProviderFieldOption("global", "Global"),
-            ),
+            info=_SESSION_STRATEGY_INFO,
             inline=True,
             group="Session",
+            options=_opts(
+                ("per-session", "Per session"),
+                ("per-directory", "Per directory"),
+                ("per-repo", "Per repo"),
+                ("global", "Global"),
+            ),
         ),
-        # —————— Full-config-only fields below (inline=False) ——————
         # — Connection —
-        ProviderField(
-            key="timeout",
-            label="Request timeout",
-            kind=KIND_NUMBER,
+        _field(
+            "timeout",
+            "Request timeout",
+            KIND_NUMBER,
+            "Request timeout in seconds for Honcho HTTP calls. Blank uses the default.",
             aliases=("requestTimeout",),
             env_fallbacks=("HONCHO_TIMEOUT",),
-            description="Request timeout in seconds for Honcho HTTP calls. Blank uses the default.",
             placeholder="30",
             group="Connection",
             scope="root",
         ),
         # — Identity —
-        ProviderField(
-            key="pinUserPeer",
-            label="Pin user peer",
-            kind=KIND_BOOL,
+        _field(
+            "pinUserPeer",
+            "Pin user peer",
+            KIND_BOOL,
+            "Pin the user peer to the peer name, ignoring gateway runtime identity. Unifies memory for single-user setups.",
             default="false",
             aliases=("pinPeerName",),
-            description="Pin the user peer to the peer name, ignoring gateway runtime identity. Unifies memory for single-user setups.",
             group="Identity",
         ),
-        ProviderField(
-            key="runtimePeerPrefix",
-            label="Runtime peer prefix",
-            kind=KIND_TEXT,
-            description="Prefix applied to unknown gateway runtime user IDs.",
+        _field(
+            "runtimePeerPrefix",
+            "Runtime peer prefix",
+            KIND_TEXT,
+            "Prefix applied to unknown gateway runtime user IDs.",
             placeholder="e.g. telegram_",
             group="Identity",
         ),
-        ProviderField(
-            key="userPeerAliases",
-            label="User peer aliases",
-            kind=KIND_JSON,
-            description="Map gateway runtime user IDs to stable Honcho peers.",
+        _field(
+            "userPeerAliases",
+            "User peer aliases",
+            KIND_JSON,
+            "Map gateway runtime user IDs to stable Honcho peers.",
             placeholder='{"telegram_123": "eri"}',
             group="Identity",
         ),
         # — Session —
-        ProviderField(
-            key="sessionPeerPrefix",
-            label="Session peer prefix",
-            kind=KIND_BOOL,
+        _field(
+            "sessionPeerPrefix",
+            "Session peer prefix",
+            KIND_BOOL,
+            "Prefix session peer names with the host.",
             default="false",
-            description="Prefix session peer names with the host.",
             group="Session",
         ),
-        ProviderField(
-            key="sessions",
-            label="Session overrides",
-            kind=KIND_JSON,
-            description="Explicit session ID overrides keyed by resolver.",
+        _field(
+            "sessions",
+            "Session overrides",
+            KIND_JSON,
+            "Explicit session ID overrides keyed by resolver.",
             placeholder='{"key": "session-id"}',
             group="Session",
             scope="root",
         ),
         # — Message writing —
-        ProviderField(
-            key="saveMessages",
-            label="Save messages",
-            kind=KIND_BOOL,
+        _field(
+            "saveMessages",
+            "Save messages",
+            KIND_BOOL,
+            "Persist conversation messages to Honcho.",
             default="true",
-            description="Persist conversation messages to Honcho.",
             group="Message writing",
         ),
-        ProviderField(
-            key="writeFrequency",
-            label="Write frequency",
-            kind=KIND_TEXT,
+        _field(
+            "writeFrequency",
+            "Write frequency",
+            KIND_TEXT,
+            "When to flush messages: async, turn, session, or every N turns.",
             default="async",
-            description="When to flush messages: async, turn, session, or every N turns.",
-            info=(
-                "async: write in the background as messages arrive. "
-                "turn: flush after each turn. session: flush when the session ends. "
-                "A number N flushes every N turns."
-            ),
+            info=_WRITE_FREQUENCY_INFO,
             placeholder="async | turn | session | N",
             group="Message writing",
         ),
+        _field(
+            "messageMetadata",
+            "Message metadata defaults",
+            KIND_JSON,
+            "Static provider-native metadata defaults for saved messages; runtime provenance fields override conflicts.",
+            placeholder='{"schema": "example.provenance/v1", "extensions": {}}',
+            group="Message writing",
+        ),
         # — Dialectic —
-        ProviderField(
-            key="dialecticReasoningLevel",
-            label="Reasoning level",
-            kind=KIND_SELECT,
+        _field(
+            "dialecticReasoningLevel",
+            "Reasoning level",
+            KIND_SELECT,
+            "Reasoning effort for dialectic (peer.chat) calls.",
             default="low",
-            description="Reasoning effort for dialectic (peer.chat) calls.",
             options=_REASONING_LEVELS,
             group="Dialectic",
         ),
-        ProviderField(
-            key="dialecticDynamic",
-            label="Dynamic reasoning",
-            kind=KIND_BOOL,
+        _field(
+            "dialecticDynamic",
+            "Dynamic reasoning",
+            KIND_BOOL,
+            "Let the model override the reasoning level per call.",
             default="true",
-            description="Let the model override the reasoning level per call.",
             group="Dialectic",
         ),
-        ProviderField(
-            key="dialecticMaxChars",
-            label="Max result chars",
-            kind=KIND_NUMBER,
-            description="Max chars of dialectic result injected into the system prompt.",
+        _field(
+            "dialecticMaxChars",
+            "Max result chars",
+            KIND_NUMBER,
+            "Max chars of dialectic result injected into the system prompt.",
             placeholder="1200",
             group="Dialectic",
         ),
-        ProviderField(
-            key="dialecticDepth",
-            label="Depth",
-            kind=KIND_NUMBER,
-            description="Dialectic passes per cycle (1–3).",
+        _field(
+            "dialecticDepth",
+            "Depth",
+            KIND_NUMBER,
+            "Dialectic passes per cycle (1–3).",
             placeholder="1",
             group="Dialectic",
         ),
-        ProviderField(
-            key="dialecticDepthLevels",
-            label="Per-pass levels",
-            kind=KIND_JSON,
-            description="Reasoning level per pass; array length matches depth.",
+        _field(
+            "dialecticDepthLevels",
+            "Per-pass levels",
+            KIND_JSON,
+            "Reasoning level per pass; array length matches depth.",
             placeholder='["low", "medium"]',
             group="Dialectic",
         ),
-        ProviderField(
-            key="dialecticMaxInputChars",
-            label="Max input chars",
-            kind=KIND_NUMBER,
-            description="Max chars of query input sent to peer.chat().",
+        _field(
+            "dialecticMaxInputChars",
+            "Max input chars",
+            KIND_NUMBER,
+            "Max chars of query input sent to peer.chat().",
             placeholder="10000",
             group="Dialectic",
         ),
         # — Reasoning —
-        ProviderField(
-            key="reasoningHeuristic",
-            label="Reasoning heuristic",
-            kind=KIND_BOOL,
+        _field(
+            "reasoningHeuristic",
+            "Reasoning heuristic",
+            KIND_BOOL,
+            "Scale the reasoning level up on longer queries.",
             default="true",
-            description="Scale the reasoning level up on longer queries.",
             group="Reasoning",
         ),
-        ProviderField(
-            key="reasoningLevelCap",
-            label="Reasoning level cap",
-            kind=KIND_SELECT,
+        _field(
+            "reasoningLevelCap",
+            "Reasoning level cap",
+            KIND_SELECT,
+            "Ceiling for the heuristic-selected reasoning level.",
             default="high",
-            description="Ceiling for the heuristic-selected reasoning level.",
             options=_REASONING_LEVELS,
             group="Reasoning",
         ),
         # — Recall —
-        ProviderField(
-            key="recallMode",
-            label="Recall mode",
-            kind=KIND_SELECT,
+        _field(
+            "recallMode",
+            "Recall mode",
+            KIND_SELECT,
+            "How memory retrieval works: hybrid, context-only, or tools-only.",
             default="hybrid",
-            description="How memory retrieval works: hybrid, context-only, or tools-only.",
-            info=(
-                "Hybrid: auto-injected context plus on-demand memory tools. "
-                "Context only: injection without tools. "
-                "Tools only: the model queries memory explicitly, nothing is injected."
-            ),
-            options=(
-                ProviderFieldOption("hybrid", "Hybrid"),
-                ProviderFieldOption("context", "Context only"),
-                ProviderFieldOption("tools", "Tools only"),
+            info=_RECALL_MODE_INFO,
+            options=_opts(
+                ("hybrid", "Hybrid"),
+                ("context", "Context only"),
+                ("tools", "Tools only"),
             ),
             group="Recall",
         ),
-        ProviderField(
-            key="contextTokens",
-            label="Context token cap",
-            kind=KIND_NUMBER,
-            description="Cap on auto-injected context tokens. Blank leaves it uncapped.",
+        _field(
+            "contextTokens",
+            "Context token cap",
+            KIND_NUMBER,
+            "Cap on auto-injected context tokens. Blank leaves it uncapped.",
             placeholder="(uncapped)",
             group="Recall",
         ),
-        ProviderField(
-            key="initOnSessionStart",
-            label="Eager init",
-            kind=KIND_BOOL,
+        _field(
+            "initOnSessionStart",
+            "Eager init",
+            KIND_BOOL,
+            "Initialize the session eagerly in tools mode instead of on first tool call.",
             default="false",
-            description="Initialize the session eagerly in tools mode instead of on first tool call.",
             group="Recall",
         ),
         # — Limits —
-        ProviderField(
-            key="messageMaxChars",
-            label="Message max chars",
-            kind=KIND_NUMBER,
-            description="Max chars per message sent to Honcho.",
+        _field(
+            "messageMaxChars",
+            "Message max chars",
+            KIND_NUMBER,
+            "Max chars per message sent to Honcho.",
             placeholder="25000",
             group="Limits",
         ),
         # — Observation —
-        ProviderField(
-            key="observationMode",
-            label="Observation mode",
-            kind=KIND_SELECT,
+        _field(
+            "observationMode",
+            "Observation mode",
+            KIND_SELECT,
+            "Per-peer observation preset. Directional observes all directions; unified shares one view.",
             default="directional",
-            description="Per-peer observation preset. Directional observes all directions; unified shares one view.",
-            options=(
-                ProviderFieldOption("directional", "Directional"),
-                ProviderFieldOption("unified", "Unified"),
-            ),
+            options=_opts(("directional", "Directional"), ("unified", "Unified")),
             group="Observation",
         ),
     ),

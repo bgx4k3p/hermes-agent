@@ -52,6 +52,7 @@ def test_declares_the_new_field_kinds():
     assert by_key["saveMessages"].kind == KIND_BOOL
     assert by_key["dialecticMaxChars"].kind == KIND_NUMBER
     assert by_key["userPeerAliases"].kind == KIND_JSON
+    assert by_key["messageMetadata"].kind == KIND_JSON
     assert by_key["recallMode"].allowed_values() == {"hybrid", "context", "tools"}
     assert by_key["observationMode"].allowed_values() == {"directional", "unified"}
 
@@ -66,7 +67,12 @@ def test_selects_constrain_their_values():
     assert environment.allowed_values() == {"production", "local"}
 
     strategy = next(f for f in provider.fields if f.key == "sessionStrategy")
-    assert strategy.allowed_values() == {"per-directory", "per-repo", "per-session", "global"}
+    assert strategy.allowed_values() == {
+        "per-directory",
+        "per-repo",
+        "per-session",
+        "global",
+    }
 
 
 def test_api_key_is_a_secret_bound_to_env():

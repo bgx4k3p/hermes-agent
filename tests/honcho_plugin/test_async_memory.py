@@ -11,6 +11,7 @@ Covers:
 
 import json
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,6 +19,8 @@ import pytest
 
 from plugins.memory.honcho.client import HonchoClientConfig
 from plugins.memory.honcho.session import (
+    DeliveryOutcome,
+    DeliveryState,
     HonchoSession,
     HonchoSessionManager,
 )
@@ -26,6 +29,7 @@ from plugins.memory.honcho.session import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_session(**kwargs) -> HonchoSession:
     return HonchoSession(
@@ -84,6 +88,7 @@ def make_manager(monkeypatch):
 # write_frequency parsing from config file
 # ---------------------------------------------------------------------------
 
+
 class TestWriteFrequencyParsing:
     def test_string_async(self, tmp_path):
         cfg_file = tmp_path / "config.json"
@@ -91,21 +96,21 @@ class TestWriteFrequencyParsing:
         cfg = HonchoClientConfig.from_global_config(config_path=cfg_file)
         assert cfg.write_frequency == "async"
 
-
     def test_integer_frequency(self, tmp_path):
         cfg_file = tmp_path / "config.json"
         cfg_file.write_text(json.dumps({"apiKey": "k", "writeFrequency": 5}))
         cfg = HonchoClientConfig.from_global_config(config_path=cfg_file)
         assert cfg.write_frequency == 5
 
-
     def test_host_block_overrides_root(self, tmp_path):
         cfg_file = tmp_path / "config.json"
-        cfg_file.write_text(json.dumps({
-            "apiKey": "k",
-            "writeFrequency": "turn",
-            "hosts": {"hermes": {"writeFrequency": "session"}},
-        }))
+        cfg_file.write_text(
+            json.dumps({
+                "apiKey": "k",
+                "writeFrequency": "turn",
+                "hosts": {"hermes": {"writeFrequency": "session"}},
+            })
+        )
         cfg = HonchoClientConfig.from_global_config(config_path=cfg_file)
         assert cfg.write_frequency == "session"
 
@@ -120,6 +125,7 @@ class TestWriteFrequencyParsing:
 # resolve_session_name with session_title
 # ---------------------------------------------------------------------------
 
+
 class TestResolveSessionNameTitle:
     def test_manual_override_beats_title(self):
         cfg = HonchoClientConfig(sessions={"/my/project": "manual-name"})
@@ -131,13 +137,11 @@ class TestResolveSessionNameTitle:
         result = cfg.resolve_session_name("/some/dir", session_title="my-project")
         assert result == "my-project"
 
-
     def test_title_sanitized(self):
         cfg = HonchoClientConfig()
         result = cfg.resolve_session_name("/some/dir", session_title="my project/name!")
         # trailing dashes stripped by .strip('-')
         assert result == "my-project-name"
-
 
     def test_none_title_falls_back_to_dirname(self):
         cfg = HonchoClientConfig()
@@ -151,14 +155,19 @@ class TestResolveSessionNameTitle:
 
     def test_per_session_uses_session_id(self):
         cfg = HonchoClientConfig(session_strategy="per-session")
-        result = cfg.resolve_session_name("/some/dir", session_id="20260309_175514_9797dd")
+        result = cfg.resolve_session_name(
+            "/some/dir", session_id="20260309_175514_9797dd"
+        )
         assert result == "20260309_175514_9797dd"
-
 
     def test_gateway_key_beats_per_session_id(self):
         # Gateways keep per-chat isolation even in per-session.
         cfg = HonchoClientConfig(session_strategy="per-session")
-        result = cfg.resolve_session_name("/some/dir", gateway_session_key="agent:main:telegram:dm:42", session_id="20260309_175514_9797dd")
+        result = cfg.resolve_session_name(
+            "/some/dir",
+            gateway_session_key="agent:main:telegram:dm:42",
+            session_id="20260309_175514_9797dd",
+        )
         assert result == "agent-main-telegram-dm-42"
 
     def test_global_strategy_returns_workspace(self):
@@ -170,6 +179,7 @@ class TestResolveSessionNameTitle:
 # ---------------------------------------------------------------------------
 # save() routing per write_frequency
 # ---------------------------------------------------------------------------
+
 
 class TestSaveRouting:
     def _make_session_with_message(self, mgr=None):
@@ -228,6 +238,7 @@ class TestSaveRouting:
 # flush_all()
 # ---------------------------------------------------------------------------
 
+
 class TestFlushAll:
     def test_flushes_all_cached_sessions(self, make_manager):
         mgr = make_manager(write_frequency="session")
@@ -268,6 +279,7 @@ class TestFlushAll:
 # async writer thread lifecycle
 # ---------------------------------------------------------------------------
 
+
 class TestAsyncWriterThread:
     def test_thread_starts_lazily_on_first_enqueue(self, make_manager):
         # B8: constructing a manager must not spawn background work
@@ -303,7 +315,11 @@ class TestAsyncWriterThread:
         def capture(session):
             flushed.append(session)
             flushed_event.set()
-            return True
+            return DeliveryOutcome(
+                state=DeliveryState.DELIVERED,
+                attempted_count=1,
+                delivered_count=1,
+            )
 
         mgr._flush_session = capture
         mgr._async_queue.put(sess)
@@ -335,7 +351,14 @@ class TestAsyncWriterThread:
             mgr._cache[sess.key] = sess
 
         flushed = []
-        mgr._flush_session = lambda session: flushed.append(session) or True
+        mgr._flush_session = lambda session: (
+            flushed.append(session)
+            or DeliveryOutcome(
+                state=DeliveryState.DELIVERED,
+                attempted_count=1,
+                delivered_count=1,
+            )
+        )
 
         thread = mgr._async_thread
         mgr.stop_async_writer()
@@ -350,84 +373,103 @@ class TestAsyncWriterThread:
 
 
 # ---------------------------------------------------------------------------
-# async retry on failure
+# async direct delivery failure
 # ---------------------------------------------------------------------------
 
-class TestAsyncWriterRetry:
-    def test_retries_once_on_failure(self, make_manager):
+
+class TestAsyncWriterFailure:
+    def test_boundary_exception_is_not_retried(self, make_manager):
         mgr = make_manager(write_frequency="async")
         mgr._ensure_async_writer()
         sess = _make_session()
         sess.add_message("user", "msg")
 
         call_count = [0]
-        retry_done = threading.Event()
+        attempt_done = threading.Event()
 
-        def flaky_flush(session):
+        def failing_flush(session):
             call_count[0] += 1
-            if call_count[0] == 1:
-                raise ConnectionError("network blip")
-            retry_done.set()
-            return True
+            attempt_done.set()
+            raise ConnectionError("network blip")
 
-        mgr._flush_session = flaky_flush
+        mgr._flush_session = failing_flush
+        mgr._async_queue.put(sess)
+        assert attempt_done.wait(timeout=10), "async writer never attempted delivery"
 
-        with patch("time.sleep"):  # skip the 2s sleep in retry
-            mgr._async_queue.put(sess)
-            assert retry_done.wait(timeout=10), "async writer never retried"
+        mgr.stop_async_writer()
+        assert call_count[0] == 1
+        assert mgr.last_delivery_outcome.state is DeliveryState.FAILED
 
-        mgr.shutdown()
-        assert call_count[0] == 2
-
-    def test_drops_after_two_failures(self, make_manager):
+    def test_terminal_failure_is_retained_without_claiming_drop(
+        self, make_manager, caplog
+    ):
         mgr = make_manager(write_frequency="async")
         mgr._ensure_async_writer()
         sess = _make_session()
         sess.add_message("user", "msg")
 
         call_count = [0]
-        retry_done = threading.Event()
+        attempt_done = threading.Event()
 
         def always_fail(session):
             call_count[0] += 1
-            if call_count[0] >= 2:
-                retry_done.set()
-            raise RuntimeError("always broken")
+            attempt_done.set()
+            return DeliveryOutcome(
+                state=DeliveryState.FAILED,
+                attempted_count=1,
+                pending_count=1,
+                error_category="sdk_error",
+            )
 
         mgr._flush_session = always_fail
 
-        with patch("time.sleep"):
+        with caplog.at_level("ERROR", logger="plugins.memory.honcho.session"):
             mgr._async_queue.put(sess)
-            assert retry_done.wait(timeout=10), "async writer never retried"
+            assert attempt_done.wait(timeout=10), (
+                "async writer never attempted delivery"
+            )
 
-        mgr.shutdown()
-        # Should have tried exactly twice (initial + one retry) and not crashed
-        assert call_count[0] == 2
+        mgr.stop_async_writer()
+        assert call_count[0] == 1
+        assert mgr.last_delivery_outcome.state is DeliveryState.FAILED
+        assert "dropping" not in caplog.text.lower()
         assert not mgr._async_thread.is_alive()
 
-    def test_retries_when_flush_reports_failure(self, make_manager):
+    def test_later_flush_all_retries_unsynced_records(self, make_manager):
         mgr = make_manager(write_frequency="async")
         mgr._ensure_async_writer()
         sess = _make_session()
         sess.add_message("user", "msg")
 
         call_count = [0]
-        retry_done = threading.Event()
+        first_done = threading.Event()
 
         def fail_then_succeed(session):
             call_count[0] += 1
-            if call_count[0] >= 2:
-                retry_done.set()
-            return call_count[0] > 1
+            if call_count[0] == 1:
+                first_done.set()
+                return DeliveryOutcome(
+                    state=DeliveryState.FAILED,
+                    attempted_count=1,
+                    pending_count=1,
+                    error_category="connection",
+                )
+            return DeliveryOutcome(
+                state=DeliveryState.DELIVERED,
+                attempted_count=1,
+                delivered_count=1,
+            )
 
         mgr._flush_session = fail_then_succeed
+        mgr._cache[sess.key] = sess
+        mgr._async_queue.put(sess)
+        assert first_done.wait(timeout=10), "async writer never attempted delivery"
+        result = mgr.flush_all()
 
-        with patch("time.sleep"):
-            mgr._async_queue.put(sess)
-            assert retry_done.wait(timeout=10), "async writer never retried"
-
-        mgr.shutdown()
         assert call_count[0] == 2
+        assert result.state is DeliveryState.DELIVERED
+        mgr._cache.clear()
+        mgr.stop_async_writer()
 
 
 def _prime_migration_session(mgr, key, honcho_session_id, ai_peer_id="custom-ai"):
@@ -477,6 +519,87 @@ class TestMemoryFileMigrationTargets:
         assert peer_by_upload_name["user_profile.md"] is user_peer
         assert peer_by_upload_name["agent_soul.md"] is ai_peer
 
+    def test_secret_file_is_rejected_before_upload_while_benign_file_migrates(
+        self, tmp_path, make_manager
+    ):
+        mgr = make_manager(write_frequency="turn", peer_name="custom-user")
+        session, honcho_session = _prime_migration_session(
+            mgr, "cli:test", "cli-test"
+        )
+        mgr._peers_cache[session.user_peer_id] = MagicMock()
+        mgr._peers_cache[session.assistant_peer_id] = MagicMock()
+        secret = "sk-" + "AGADORFAKESECRET1234567890ABCDEF"
+        (tmp_path / "MEMORY.md").write_text(
+            f"Never upload this credential: {secret}", encoding="utf-8"
+        )
+        (tmp_path / "USER.md").write_text("User prefers concise replies", encoding="utf-8")
+
+        uploaded = mgr.migrate_memory_files(session.key, str(tmp_path))
+
+        assert uploaded is True
+        honcho_session.upload_file.assert_called_once()
+        assert honcho_session.upload_file.call_args.kwargs["file"][0] == "user_profile.md"
+        assert secret not in repr(honcho_session.upload_file.call_args)
+
+    @pytest.mark.parametrize("filename", ["MEMORY.md", "USER.md", "SOUL.md"])
+    def test_each_automatic_memory_file_rejects_entire_secret_payload(
+        self, tmp_path, make_manager, filename
+    ):
+        mgr = make_manager(write_frequency="turn", peer_name="custom-user")
+        session, honcho_session = _prime_migration_session(
+            mgr, "cli:test", "cli-test"
+        )
+        secret = "sk-" + "AGADORFAKESECRET1234567890ABCDEF"
+        (tmp_path / filename).write_text(
+            f"Benign prefix, credential {secret}, benign suffix", encoding="utf-8"
+        )
+
+        assert mgr.migrate_memory_files(session.key, str(tmp_path)) is False
+        honcho_session.upload_file.assert_not_called()
+
+    def test_secret_ai_identity_seed_is_rejected_before_sdk_message(self, make_manager):
+        mgr = make_manager(write_frequency="turn", peer_name="custom-user")
+        session, honcho_session = _prime_migration_session(
+            mgr, "cli:test", "cli-test"
+        )
+        assistant_peer = MagicMock()
+        mgr._peers_cache[session.assistant_peer_id] = assistant_peer
+        secret = "sk-" + "AGADORFAKESECRET1234567890ABCDEF"
+
+        seeded = mgr.seed_ai_identity(
+            session.key, f"Agent identity with credential {secret}", source="SOUL.md"
+        )
+
+        assert seeded is False
+        assistant_peer.message.assert_not_called()
+        honcho_session.add_messages.assert_not_called()
+
+    def test_cli_identity_secret_is_rejected_before_sdk_message(
+        self, tmp_path, make_manager, monkeypatch, capsys
+    ):
+        from plugins.memory.honcho import cli
+
+        mgr = make_manager(write_frequency="turn", peer_name="custom-user")
+        session, honcho_session = _prime_migration_session(
+            mgr, "cli:test", "cli-test"
+        )
+        assistant_peer = MagicMock()
+        mgr._peers_cache[session.assistant_peer_id] = assistant_peer
+        secret = "sk-" + "AGADORFAKESECRET1234567890ABCDEF"
+        identity_file = tmp_path / "SOUL.md"
+        identity_file.write_text(f"Identity credential: {secret}", encoding="utf-8")
+        monkeypatch.setattr(cli, "_read_config", lambda: {"apiKey": "test-key"})
+        monkeypatch.setattr(cli, "_resolve_api_key", lambda _cfg: "test-key")
+        monkeypatch.setattr(cli, "_host_key", lambda: "hermes")
+        monkeypatch.setattr(cli, "_connect", lambda _host: (mgr._config, MagicMock()))
+        monkeypatch.setattr(cli, "_session_manager", lambda *_args: (mgr, session.key))
+
+        cli.cmd_identity(SimpleNamespace(file=str(identity_file), show=False))
+
+        assert "Failed to seed identity" in capsys.readouterr().out
+        assistant_peer.message.assert_not_called()
+        honcho_session.add_messages.assert_not_called()
+
 
 class TestMemoryFileMigrationOwnerGate:
     def test_non_owner_gateway_user_is_skipped(self, tmp_path, make_manager):
@@ -501,7 +624,8 @@ class TestMemoryFileMigrationOwnerGate:
         assert honcho_session.upload_file.call_count == 0
 
     def test_no_declared_owner_with_gateway_identity_is_skipped(
-            self, tmp_path, make_manager):
+        self, tmp_path, make_manager
+    ):
         """Without peerName nobody messaging through a gateway can be proven
         to be the owner — migration must not run."""
         mgr = make_manager(
@@ -585,6 +709,7 @@ class TestMemoryFileMigrationOwnerGate:
 # HonchoClientConfig dataclass defaults for new fields
 # ---------------------------------------------------------------------------
 
+
 class TestNewConfigFieldDefaults:
     def test_write_frequency_default(self):
         cfg = HonchoClientConfig()
@@ -600,4 +725,3 @@ class TestPrefetchCacheAccessors:
 
         assert mgr.pop_context_result("cli:test") == payload
         assert mgr.pop_context_result("cli:test") == {}
-

@@ -16,6 +16,7 @@ chosen ``user_peer_id`` can be asserted without touching the network.
 
 import hashlib
 import json
+import os
 from unittest.mock import MagicMock
 
 
@@ -36,11 +37,13 @@ class TestPinPeerNameConfigParsing:
 
     def test_root_level_true(self, tmp_path, monkeypatch):
         config_file = tmp_path / "honcho.json"
-        config_file.write_text(json.dumps({
-            "apiKey": "k",
-            "peerName": "Igor",
-            "pinPeerName": True,
-        }))
+        config_file.write_text(
+            json.dumps({
+                "apiKey": "k",
+                "peerName": "Igor",
+                "pinPeerName": True,
+            })
+        )
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / "isolated"))
 
         config = HonchoClientConfig.from_global_config(config_path=config_file)
@@ -50,26 +53,29 @@ class TestPinPeerNameConfigParsing:
     def test_host_block_true(self, tmp_path, monkeypatch):
         """Host-level flag works the same as root-level."""
         config_file = tmp_path / "honcho.json"
-        config_file.write_text(json.dumps({
-            "apiKey": "k",
-            "peerName": "Igor",
-            "hosts": {
-                "hermes": {"pinPeerName": True},
-            },
-        }))
+        config_file.write_text(
+            json.dumps({
+                "apiKey": "k",
+                "peerName": "Igor",
+                "hosts": {
+                    "hermes": {"pinPeerName": True},
+                },
+            })
+        )
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / "isolated"))
 
         config = HonchoClientConfig.from_global_config(config_path=config_file)
         assert config.pin_peer_name is True
 
-
     def test_explicit_false_parses(self, tmp_path, monkeypatch):
         config_file = tmp_path / "honcho.json"
-        config_file.write_text(json.dumps({
-            "apiKey": "k",
-            "peerName": "Igor",
-            "pinPeerName": False,
-        }))
+        config_file.write_text(
+            json.dumps({
+                "apiKey": "k",
+                "peerName": "Igor",
+                "pinPeerName": False,
+            })
+        )
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / "isolated"))
 
         config = HonchoClientConfig.from_global_config(config_path=config_file)
@@ -82,13 +88,14 @@ class TestRuntimePeerMappingConfigParsing:
         assert config.user_peer_aliases == {}
         assert config.runtime_peer_prefix == ""
 
-
     def test_malformed_alias_config_is_ignored(self, tmp_path):
         config_file = tmp_path / "honcho.json"
-        config_file.write_text(json.dumps({
-            "apiKey": "k",
-            "userPeerAliases": ["not", "a", "map"],
-        }))
+        config_file.write_text(
+            json.dumps({
+                "apiKey": "k",
+                "userPeerAliases": ["not", "a", "map"],
+            })
+        )
 
         config = HonchoClientConfig.from_global_config(config_path=config_file)
 
@@ -107,9 +114,7 @@ def _patch_manager_for_resolution_test(mgr: HonchoSessionManager) -> None:
     """
     fake_peer = MagicMock()
     mgr._get_or_create_peer = MagicMock(return_value=fake_peer)
-    mgr._get_or_create_honcho_session = MagicMock(
-        return_value=(MagicMock(), [])
-    )
+    mgr._get_or_create_honcho_session = MagicMock(return_value=(MagicMock(), []))
 
 
 class TestPeerResolutionOrder:
@@ -224,7 +229,6 @@ class TestPeerResolutionOrder:
         session = mgr.get_or_create("telegram:7654321")
         assert session.user_peer_id == f"telegram_7654321-{expected_hash}"
 
-
     def test_alias_value_is_sanitized_after_selection(self):
         mgr = HonchoSessionManager(
             honcho=MagicMock(),
@@ -317,7 +321,6 @@ class TestPeerResolutionOrder:
         session = mgr.get_or_create("telegram:7654321")
         assert session.user_peer_id == "Igor"
 
-
     def test_alt_runtime_id_can_match_alias_without_changing_raw_fallback(self):
         """Stable alternate IDs can map known users while primary ID fallback stays unchanged."""
         mgr = HonchoSessionManager(
@@ -335,7 +338,6 @@ class TestPeerResolutionOrder:
 
         session = mgr.get_or_create("feishu:chat")
         assert session.user_peer_id == "Igor"
-
 
     def test_everything_missing_falls_back_to_session_key(self):
         """Deepest fallback: no runtime identity, no peer_name, no pin.
@@ -407,10 +409,14 @@ class TestCrossPlatformMemoryUnification:
             write_frequency="turn",
         )
         mgr_a = HonchoSessionManager(
-            honcho=MagicMock(), config=cfg, runtime_user_peer_name="user_a",
+            honcho=MagicMock(),
+            config=cfg,
+            runtime_user_peer_name="user_a",
         )
         mgr_b = HonchoSessionManager(
-            honcho=MagicMock(), config=cfg, runtime_user_peer_name="user_b",
+            honcho=MagicMock(),
+            config=cfg,
+            runtime_user_peer_name="user_b",
         )
         _patch_manager_for_resolution_test(mgr_a)
         _patch_manager_for_resolution_test(mgr_b)
@@ -432,16 +438,18 @@ class TestPinUserPeerAlias:
     host pinPeerName → root pinUserPeer → root pinPeerName → default.
     """
 
-
     def test_pinPeerName_still_works_unchanged(self, tmp_path):
         from plugins.memory.honcho.client import HonchoClientConfig
         import json
+
         config_file = tmp_path / "honcho.json"
-        config_file.write_text(json.dumps({
-            "apiKey": "***",
-            "peerName": "eri",
-            "hosts": {"hermes": {"pinPeerName": True}},
-        }))
+        config_file.write_text(
+            json.dumps({
+                "apiKey": "***",
+                "peerName": "eri",
+                "hosts": {"hermes": {"pinPeerName": True}},
+            })
+        )
         config = HonchoClientConfig.from_global_config(config_path=config_file)
         assert config.pin_peer_name is True
 
@@ -514,20 +522,37 @@ class TestPinTransition:
             "gateway cache must bust the whole manager instead."
         )
 
-    def test_cache_busting_signature_reflects_pin_peer_name(self, tmp_path, monkeypatch):
+    def test_cache_busting_signature_reflects_pin_peer_name(
+        self, tmp_path, monkeypatch
+    ):
         """Gateway agent cache must bust when honcho.json's pinPeerName flips."""
         from gateway.run import GatewayRunner
 
         cfg_path = tmp_path / "honcho.json"
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 
-        cfg_path.write_text(json.dumps({"apiKey": "k", "peerName": "Igor", "pinPeerName": True}))
-        sig_pinned = GatewayRunner._extract_cache_busting_config({"memory": {"provider": "honcho"}})
+        cfg_path.write_text(
+            json.dumps({"apiKey": "k", "peerName": "Igor", "pinPeerName": True})
+        )
+        sig_pinned = GatewayRunner._extract_cache_busting_config({
+            "memory": {"provider": "honcho"}
+        })
 
-        cfg_path.write_text(json.dumps({"apiKey": "k", "peerName": "Igor", "pinPeerName": False}))
-        sig_unpinned = GatewayRunner._extract_cache_busting_config({"memory": {"provider": "honcho"}})
+        previous_mtime = cfg_path.stat().st_mtime_ns
+        cfg_path.write_text(
+            json.dumps({"apiKey": "k", "peerName": "Igor", "pinPeerName": False})
+        )
+        # The expanded focused suite can rewrite this tiny file within one
+        # filesystem timestamp tick. Force a distinct signature so this
+        # existing cache-busting contract remains deterministic.
+        os.utime(cfg_path, ns=(previous_mtime + 1, previous_mtime + 1))
+        sig_unpinned = GatewayRunner._extract_cache_busting_config({
+            "memory": {"provider": "honcho"}
+        })
 
-        assert sig_pinned["honcho.pin_peer_name"] != sig_unpinned["honcho.pin_peer_name"]
+        assert (
+            sig_pinned["honcho.pin_peer_name"] != sig_unpinned["honcho.pin_peer_name"]
+        )
 
 
 class TestProfilePeerUniqueness:
@@ -571,4 +596,3 @@ class TestProfilePeerUniqueness:
             "Profiles pinned to distinct peer names must not collapse to "
             "the same Honcho peer — otherwise profile isolation is fictional."
         )
-
